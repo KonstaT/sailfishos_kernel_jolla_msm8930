@@ -376,6 +376,19 @@ int32_t msm_camera_i2c_write_tbl(struct msm_camera_i2c_client *client,
 {
 	int i;
 	int32_t rc = -EFAULT;
+
+//Eric Liu+, add i2c burst write
+#if 1
+	unsigned char buf[512];
+	struct msm_camera_i2c_reg_conf *t1, *t2;
+	enum msm_camera_i2c_data_type dt_next;
+	struct i2c_msg msg;
+	int len, ret, addr_align;
+#endif
+	if(size == 0) //if the array is empty, simple return 0
+		return 0;
+//Eric Liu-
+
 	if (client->cci_client) {
 		struct msm_camera_cci_ctrl cci_ctrl;
 		cci_ctrl.cmd = MSM_CCI_I2C_WRITE;
@@ -389,6 +402,32 @@ int32_t msm_camera_i2c_write_tbl(struct msm_camera_i2c_client *client,
 		CDBG("%s line %d rc = %d\n", __func__, __LINE__, rc);
 		rc = cci_ctrl.status;
 	} else {
+
+//Eric Liu+, debug log
+#if 0
+    if(size == 1)
+      printk("[CAM][I2C]%04X\n",
+        reg_conf_tbl[0].reg_addr);
+    else if(size == 2)
+      printk("[CAM][I2C]%04X %04X\n",
+        reg_conf_tbl[0].reg_addr,reg_conf_tbl[1].reg_addr);
+    else if(size == 3)
+      printk("[CAM][I2C]%04X %04X %04X\n",
+        reg_conf_tbl[0].reg_addr,reg_conf_tbl[1].reg_addr,reg_conf_tbl[2].reg_addr);
+    else if(size == 4)
+      printk("[CAM][I2C]%04X %04X %04X %04X\n",
+        reg_conf_tbl[0].reg_addr,reg_conf_tbl[1].reg_addr,reg_conf_tbl[2].reg_addr,reg_conf_tbl[3].reg_addr);
+    else if(size == 5)
+      printk("[CAM][I2C]%04X %04X %04X %04X %04X\n",
+        reg_conf_tbl[0].reg_addr,reg_conf_tbl[1].reg_addr,reg_conf_tbl[2].reg_addr,reg_conf_tbl[3].reg_addr,
+        reg_conf_tbl[4].reg_addr);
+    else
+      printk("[CAM][I2C]%04X %04X %04X %04X %04X %04X\n",
+        reg_conf_tbl[0].reg_addr,reg_conf_tbl[1].reg_addr,reg_conf_tbl[2].reg_addr,reg_conf_tbl[3].reg_addr,
+        reg_conf_tbl[4].reg_addr,reg_conf_tbl[5].reg_addr);
+#endif
+//Eric Liu-
+
 		for (i = 0; i < size; i++) {
 			enum msm_camera_i2c_data_type dt;
 			if (reg_conf_tbl->cmd_type == MSM_CAMERA_I2C_CMD_POLL) {
@@ -404,11 +443,78 @@ int32_t msm_camera_i2c_write_tbl(struct msm_camera_i2c_client *client,
 				switch (dt) {
 				case MSM_CAMERA_I2C_BYTE_DATA:
 				case MSM_CAMERA_I2C_WORD_DATA:
+//Eric Liu+, add i2c burst write
+#if 0
 					rc = msm_camera_i2c_write(
 						client,
 						reg_conf_tbl->reg_addr,
 						reg_conf_tbl->reg_data, dt);
 					break;
+#else
+          //for OV8820 and mt9m114, both are 2 byte addr
+          buf[0] = reg_conf_tbl->reg_addr >> 8;     //now addr
+          buf[1] = reg_conf_tbl->reg_addr & 0xFF;
+          len = 2;
+
+          while(1)
+          {
+            t1 = reg_conf_tbl;        //now
+            t2 = reg_conf_tbl + 1;    //next
+            if(dt == MSM_CAMERA_I2C_WORD_DATA)
+            {
+              buf[len++] = t1->reg_data >> 8;   //now data
+              buf[len++] = t1->reg_data & 0xFF;
+              addr_align = (t1->reg_addr + 2) == t2->reg_addr ? 1 : 0;
+            }
+            else
+            {
+              buf[len++] = t1->reg_data & 0xFF; //now data
+              addr_align = (t1->reg_addr + 1) == t2->reg_addr ? 1 : 0;
+            }
+            dt_next = (t2->dt == 0)? data_type : t2->dt;  //next data type
+
+            if(i < (size - 1) &&                          //tbl still not end
+              t2->cmd_type == MSM_CAMERA_I2C_CMD_WRITE && //next is write
+              dt_next == dt &&                            //next dt is same dt
+              addr_align == 1 &&                          //addr is aligned
+              t1->reg_addr != 0x0080 &&                   //now is not command reg  (mt9m114's command reg don't burst)
+              t2->reg_addr != 0x0080 &&                   //next is not command reg (mt9m114's command reg don't burst)
+              len <= (sizeof(buf) - 2) )                  //buf still have space
+            {
+              i++;
+              reg_conf_tbl++;
+            }
+            else
+              break;
+          }
+
+          //send i2c data
+          msg.addr  = client->client->addr >> 1;
+          msg.flags = 0;
+          msg.len   = len;
+          msg.buf   = buf;
+          ret = i2c_transfer(client->client->adapter, &msg, 1);
+          rc = (ret < 0)? ret : 0;
+          if(ret < 0)
+            printk("[CAM][I2C]Error = %d !!!\n",ret);
+
+          //debug log
+          #if 0
+          {
+            int a;
+            printk("[CAM][I2C](%3d)%02X%02X,",len,buf[0],buf[1]);
+            for(a=2; a<len; a++)
+            {
+              if((a % 16) == 0)   printk("%02X,\n",buf[a]);
+              else                printk("%02X,",buf[a]);
+            }
+            printk("\n");
+          }
+          #endif
+          break;
+#endif
+//Eric Liu-
+
 				case MSM_CAMERA_I2C_SET_BYTE_MASK:
 					rc = msm_camera_i2c_set_mask(client,
 						reg_conf_tbl->reg_addr,

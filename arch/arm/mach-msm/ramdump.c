@@ -46,6 +46,8 @@ struct ramdump_device {
 	wait_queue_head_t dump_wait_q;
 	int nsegments;
 	struct ramdump_segment *segments;
+	//Terry Cheng, 20130307, Check ramdump whether valid
+	unsigned int check_ramdump_vaild;
 };
 
 static int ramdump_open(struct inode *inode, struct file *filep)
@@ -54,6 +56,7 @@ static int ramdump_open(struct inode *inode, struct file *filep)
 				struct ramdump_device, device);
 	rd_dev->consumer_present = 1;
 	rd_dev->ramdump_status = 0;
+
 	return 0;
 }
 
@@ -61,6 +64,7 @@ static int ramdump_release(struct inode *inode, struct file *filep)
 {
 	struct ramdump_device *rd_dev = container_of(filep->private_data,
 				struct ramdump_device, device);
+
 	rd_dev->consumer_present = 0;
 	rd_dev->data_ready = 0;
 	complete(&rd_dev->ramdump_complete);
@@ -135,6 +139,28 @@ static int ramdump_read(struct file *filep, char __user *buf, size_t count,
 		ret = -ENOMEM;
 		goto ramdump_done;
 	}
+	/* Terry Cheng, 20130307, Check ramdump whether valid {*/
+	//Check first 10 bytes whether 0
+	if (rd_dev->check_ramdump_vaild == 1){
+		int i = 0;
+		int count = 0;
+	       pr_err("Ramdump(%s):  ioremap: addr %lx, to %p size %x\n",
+	                        rd_dev->name, addr, device_mem, copy_size);
+		for (i=0;i<10;i++) {
+			pr_err("0x%x ", *((unsigned char*)device_mem+i));
+			if (*((unsigned char*)device_mem+i) == 0)
+				count++;
+		}
+		if(count == 10){
+			pr_err("ramdump data is not vaild call bug to do whole ramdump \n");
+			//Terry Cheng, 20130403, Remove BUG as system request. 
+			//if (!strncmp(rd_dev->name, "ramdump_modem_sw", 16) || !strncmp(rd_dev->name, "ramdump_modem_fw", 16))
+			//	BUG();
+		}
+		//Check done 
+		rd_dev->check_ramdump_vaild = 0;
+	}
+	/* } Terry Cheng, 20130307, Check ramdump whether valid */
 
 	if (copy_to_user(buf, device_mem, copy_size)) {
 		pr_err("Ramdump(%s): Couldn't copy all data to user.",
@@ -252,6 +278,8 @@ int do_ramdump(void *handle, struct ramdump_segment *segments,
 
 	rd_dev->data_ready = 1;
 	rd_dev->ramdump_status = -1;
+	//Terry Cheng, 20130307, Check ramdump whether valid
+	rd_dev->check_ramdump_vaild = 1;	
 
 	INIT_COMPLETION(rd_dev->ramdump_complete);
 

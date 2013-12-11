@@ -15,7 +15,7 @@
 #include <linux/delay.h>
 #include <mach/camera.h>
 #include <media/v4l2-subdev.h>
-#include "msm_camera_i2c.h"
+#include "../io/msm_camera_i2c.h"
 
 #define TRUE  1
 #define FALSE 0

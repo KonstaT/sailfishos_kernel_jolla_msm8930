@@ -48,6 +48,10 @@ static inline int in_exception_text(unsigned long ptr)
 
 extern void __init early_trap_init(void *);
 extern void dump_backtrace_entry(unsigned long where, unsigned long from, unsigned long frame);
+/* Terry Cheng, 20110817, Add for poweroff reason { */
+extern size_t dump_backtrace_entry_to_buf(unsigned long where, unsigned long from, 
+			unsigned long frame, char *buffer, size_t length);
+/* } Terry Cheng, 20110817, Add for poweroff reason  */
 extern void ptrace_break(struct task_struct *tsk, struct pt_regs *regs);
 
 extern void *vectors_page;

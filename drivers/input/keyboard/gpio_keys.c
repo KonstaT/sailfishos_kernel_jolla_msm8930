@@ -40,6 +40,7 @@ struct gpio_button_data {
 	spinlock_t lock;
 	bool disabled;
 	bool key_pressed;
+	unsigned int key_old_state;  //Carl Chang, 20130401, key previous state
 };
 
 struct gpio_keys_drvdata {
@@ -324,6 +325,10 @@ static struct attribute_group gpio_keys_attr_group = {
 	.attrs = gpio_keys_attrs,
 };
 
+/* Bright Lee, 20121211, hotkey log { */
+unsigned int vol_down_key_status;		//Keycode 114
+/* } Bright Lee, 20121211 */
+
 static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 {
 	const struct gpio_keys_button *button = bdata->button;
@@ -331,11 +336,20 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 	unsigned int type = button->type ?: EV_KEY;
 	int state = (gpio_get_value_cansleep(button->gpio) ? 1 : 0) ^ button->active_low;
 
+	/* Bright Lee, 20121211, Merge hotkey log { */
+	if(button->code ==  KEY_VOLUMEDOWN)
+		vol_down_key_status = !!state;
+	/* } Bright Lee, 20121211 */
+
 	if (type == EV_ABS) {
 		if (state)
 			input_event(input, type, button->code, button->value);
 	} else {
 		input_event(input, type, button->code, !!state);
+		if (bdata->key_old_state != !!state) //Carl Chang, 20130401, if previous state != current state ,print the log.
+			printk("keycode[%d] is %s\n", button->code, 
+			!!state ? "pressed":"released");
+		bdata->key_old_state = !!state;      //Carl Chang, 20130401, remember current state.
 	}
 	input_sync(input);
 }

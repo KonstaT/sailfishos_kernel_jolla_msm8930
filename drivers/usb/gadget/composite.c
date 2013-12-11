@@ -340,8 +340,21 @@ int usb_function_activate(struct usb_function *function)
 int usb_interface_id(struct usb_configuration *config,
 		struct usb_function *function)
 {
-	unsigned id = config->next_interface_id;
+	unsigned id;
 
+	/*
+	 * unbind_android_function() may have left null entries
+	 * in the interface table. Try to reuse those first,
+	 * to keep the ids contiguous.
+	 */
+	for (id = 0; id < config->next_interface_id; id++) {
+		if (!config->interface[id]) {
+			config->interface[id] = function;
+			return id;
+		}
+	}
+
+	id = config->next_interface_id;
 	if (id < MAX_CONFIG_INTERFACES) {
 		config->interface[id] = function;
 		config->next_interface_id = id + 1;
@@ -628,12 +641,12 @@ static int set_config(struct usb_composite_dev *cdev,
 	cdev->config = c;
 
 	/* Initialize all interfaces by setting them to altsetting zero. */
-	for (tmp = 0; tmp < MAX_CONFIG_INTERFACES; tmp++) {
+	for (tmp = 0; tmp < c->next_interface_id; tmp++) {
 		struct usb_function	*f = c->interface[tmp];
 		struct usb_descriptor_header **descriptors;
 
 		if (!f)
-			break;
+			continue;
 
 		/*
 		 * Record which endpoints are used by the function. This is used
@@ -687,6 +700,7 @@ static int set_config(struct usb_composite_dev *cdev,
 	/* when we return, be sure our power usage is valid */
 	power = c->bMaxPower ? (2 * c->bMaxPower) : CONFIG_USB_GADGET_VBUS_DRAW;
 done:
+	printk("USB::composite %s set usb configurate draw %d mA\n",__func__,power);
 	usb_gadget_vbus_draw(gadget, power);
 
 	if (result >= 0 && cdev->delayed_status)
@@ -814,6 +828,11 @@ int usb_remove_config(struct usb_composite_dev *cdev,
 {
 	unsigned long flags;
 
+	if (config->cdev == NULL) {
+		pr_warn("Calling usb_remove_config without a matching usb_add_config!\n");
+		goto end;
+	}
+
 	spin_lock_irqsave(&cdev->lock, flags);
 
 	if (cdev->config == config)
@@ -822,7 +841,7 @@ int usb_remove_config(struct usb_composite_dev *cdev,
 	list_del(&config->list);
 
 	spin_unlock_irqrestore(&cdev->lock, flags);
-
+end:
 	return unbind_config(cdev, config);
 }
 
@@ -1359,6 +1378,7 @@ static void composite_disconnect(struct usb_gadget *gadget)
 	/* REVISIT:  should we have config and device level
 	 * disconnect callbacks?
 	 */
+	printk("USB::composite %s\n",__func__);
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (cdev->config)
 		reset_config(cdev);
@@ -1547,7 +1567,7 @@ composite_suspend(struct usb_gadget *gadget)
 		composite->suspend(cdev);
 
 	cdev->suspended = 1;
-
+	printk("USB::%s draw 2 mA\n",__func__);
 	usb_gadget_vbus_draw(gadget, 2);
 }
 
@@ -1571,7 +1591,7 @@ composite_resume(struct usb_gadget *gadget)
 		}
 
 		maxpower = cdev->config->bMaxPower;
-
+		printk("USB::%s maxpower=%d\n",__func__,maxpower);
 		usb_gadget_vbus_draw(gadget, maxpower ?
 			(2 * maxpower) : CONFIG_USB_GADGET_VBUS_DRAW);
 	}

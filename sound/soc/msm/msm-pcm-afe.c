@@ -603,8 +603,18 @@ static struct platform_driver msm_afe_driver = {
 
 static int __init msm_soc_platform_init(void)
 {
+/* Jen Chang merge from detroit_2.0 for boot log */
+#if 0
 	pr_debug("%s\n", __func__);
 	return platform_driver_register(&msm_afe_driver);
+#else
+	int ret = 0;
+	printk("BootLog, +%s\n", __func__);
+	ret = platform_driver_register(&msm_afe_driver);
+	printk("BootLog, -%s, ret=%d\n", __func__, ret);
+	return ret;
+#endif
+/* Jen Chang, 20120924 */
 }
 module_init(msm_soc_platform_init);
 

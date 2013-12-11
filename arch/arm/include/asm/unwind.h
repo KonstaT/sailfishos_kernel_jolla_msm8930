@@ -49,6 +49,10 @@ extern struct unwind_table *unwind_table_add(unsigned long start,
 					     unsigned long text_size);
 extern void unwind_table_del(struct unwind_table *tab);
 extern void unwind_backtrace(struct pt_regs *regs, struct task_struct *tsk);
+/* Terry Cheng, 20110817, Add for poweroff reason { */
+extern size_t unwind_backtrace_to_buf(struct pt_regs *regs, struct task_struct *tsk,
+				char *buffer, size_t length);
+/* }Terry Cheng, 20110817, Add for poweroff reason  */
 
 #endif	/* !__ASSEMBLY__ */
 

@@ -26,8 +26,13 @@
 #include <mach/socinfo.h>
 #include "msm-pcm-routing.h"
 #include "../codecs/wcd9304.h"
+#include <mach/hwid.h>
 
 /* 8930 machine driver */
+
+extern unsigned int SND_DLL;
+#undef dev_dbg
+#define dev_dbg(dev,fmt,args...) do { if(SND_DLL > 0) printk(fmt,##args); } while(0);
 
 #define MSM8930_SPK_ON 1
 #define MSM8930_SPK_OFF 0
@@ -42,13 +47,25 @@
 #define DEFAULT_PMIC_SPK_GAIN 0x0D
 #define SITAR_EXT_CLK_RATE 12288000
 
-#define SITAR_MBHC_DEF_BUTTONS 8
+#define SITAR_MBHC_DEF_BUTTONS 1
 #define SITAR_MBHC_DEF_RLOADS 5
 
 #define GPIO_AUX_PCM_DOUT 63
 #define GPIO_AUX_PCM_DIN 64
 #define GPIO_AUX_PCM_SYNC 65
 #define GPIO_AUX_PCM_CLK 66
+
+extern struct dentry *kernel_debuglevel_dir;
+#ifdef CONFIG_BUILD_FACTORY
+unsigned int SND_DLL = 1;
+#else
+unsigned int SND_DLL = 0;
+#endif
+
+/* Jen Chang add for headset gpio detection pin */
+#define JACK_GPIO 37
+#define US_EURO_SWITCH_GPIO 80
+/* Jen Chang, 20121210 */
 
 static int msm8930_spk_control;
 static int msm8930_slim_0_rx_ch = 1;
@@ -82,7 +99,7 @@ static struct sitar_mbhc_config mbhc_cfg = {
 	.mclk_rate = SITAR_EXT_CLK_RATE,
 	.gpio = 0,
 	.gpio_irq = 0,
-	.gpio_level_insert = 1,
+	.gpio_level_insert = 0,
 };
 
 
@@ -330,6 +347,18 @@ static const struct snd_soc_dapm_widget msm8930_dapm_widgets[] = {
 
 };
 
+#if 0
+static const struct snd_soc_dapm_route boston_evt1_audio_map[] = {
+	{"AMIC3", NULL, "MIC BIAS2 External"},
+	{"MIC BIAS2 External", NULL, "ANCRight Headset Mic"},
+};
+#endif
+
+static const struct snd_soc_dapm_route boston_evt2_audio_map[] = {
+	{"AMIC3", NULL, "MIC BIAS1 External"},
+	{"MIC BIAS1 External", NULL, "ANCRight Headset Mic"},
+};
+
 static const struct snd_soc_dapm_route common_audio_map[] = {
 
 	{"RX_BIAS", NULL, "MCLK"},
@@ -347,11 +376,15 @@ static const struct snd_soc_dapm_route common_audio_map[] = {
 	{"MIC BIAS2 External", NULL, "Headset Mic"},
 
 	/* Microphone path */
+/* Jen Chang modify for meet boston HW design */
+#if 0
 	{"AMIC1", NULL, "MIC BIAS2 External"},
 	{"MIC BIAS2 External", NULL, "ANCLeft Headset Mic"},
-
-	{"AMIC3", NULL, "MIC BIAS2 External"},
-	{"MIC BIAS2 External", NULL, "ANCRight Headset Mic"},
+#else
+	{"AMIC1", NULL, "MIC BIAS1 External"},
+	{"MIC BIAS1 External", NULL, "ANCLeft Headset Mic"},
+#endif
+/* Jen Chang, 20121127 */
 
 	{"HEADPHONE", NULL, "LDO_H"},
 
@@ -552,7 +585,7 @@ static void *def_sitar_mbhc_cal(void)
 #undef S
 #define S(X, Y) ((SITAR_MBHC_CAL_PLUG_TYPE_PTR(sitar_cal)->X) = (Y))
 	S(v_no_mic, 30);
-	S(v_hs_max, 1650);
+	S(v_hs_max, 2550);
 #undef S
 #define S(X, Y) ((SITAR_MBHC_CAL_BTN_DET_PTR(sitar_cal)->X) = (Y))
 	S(c[0], 62);
@@ -569,22 +602,24 @@ static void *def_sitar_mbhc_cal(void)
 	btn_cfg = SITAR_MBHC_CAL_BTN_DET_PTR(sitar_cal);
 	btn_low = sitar_mbhc_cal_btn_det_mp(btn_cfg, SITAR_BTN_DET_V_BTN_LOW);
 	btn_high = sitar_mbhc_cal_btn_det_mp(btn_cfg, SITAR_BTN_DET_V_BTN_HIGH);
+/* Jen Chang modify for multi-button detection range depended on acer headset */
 	btn_low[0] = -50;
-	btn_high[0] = 10;
-	btn_low[1] = 11;
-	btn_high[1] = 38;
-	btn_low[2] = 39;
-	btn_high[2] = 64;
-	btn_low[3] = 65;
-	btn_high[3] = 91;
-	btn_low[4] = 92;
-	btn_high[4] = 115;
-	btn_low[5] = 116;
-	btn_high[5] = 141;
-	btn_low[6] = 142;
-	btn_high[6] = 163;
-	btn_low[7] = 164;
-	btn_high[7] = 250;
+	btn_high[0] = 64;
+	btn_low[1] = 120;
+	btn_high[1] = 220;
+	btn_low[2] = 350;
+	btn_high[2] = 450;
+	btn_low[3] = 350;
+	btn_high[3] = 450;
+	btn_low[4] = 350;
+	btn_high[4] = 450;
+	btn_low[5] = 350;
+	btn_high[5] = 450;
+	btn_low[6] = 350;
+	btn_high[6] = 450;
+	btn_low[7] = 350;
+	btn_high[7] = 450;
+/* Jen Chang, 20121212 */
 	n_ready = sitar_mbhc_cal_btn_det_mp(btn_cfg, SITAR_BTN_DET_N_READY);
 	n_ready[0] = 48;
 	n_ready[1] = 38;
@@ -672,6 +707,22 @@ static int msm8930_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_add_routes(dapm, common_audio_map,
 		ARRAY_SIZE(common_audio_map));
 
+#if 1
+	snd_soc_dapm_add_routes(dapm, boston_evt2_audio_map,
+			ARRAY_SIZE(boston_evt2_audio_map));
+#else
+    if (system_rev < EVT2)
+    {
+        snd_soc_dapm_add_routes(dapm, boston_evt1_audio_map,
+                ARRAY_SIZE(boston_evt1_audio_map));
+    }
+    else
+    {
+        snd_soc_dapm_add_routes(dapm, boston_evt2_audio_map,
+                ARRAY_SIZE(boston_evt2_audio_map));
+    }
+#endif
+
 	snd_soc_dapm_enable_pin(dapm, "Ext Spk Left Pos");
 	snd_soc_dapm_enable_pin(dapm, "Ext Spk Left Neg");
 
@@ -693,7 +744,9 @@ static int msm8930_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	}
 	codec_clk = clk_get(cpu_dai->dev, "osr_clk");
 
-	mbhc_cfg.gpio = 37;
+/* Jen Chang modify for headset gpio detection pin */
+	mbhc_cfg.gpio = JACK_GPIO; //37;
+/* Jen Chang, 20121127 */
 	mbhc_cfg.gpio_irq = gpio_to_irq(mbhc_cfg.gpio);
 	sitar_hs_detect(codec, &mbhc_cfg);
 
@@ -1302,18 +1355,19 @@ struct snd_soc_card snd_soc_card_msm8930 = {
 
 static struct platform_device *msm8930_snd_device;
 
+/* Jen Chang modify gpio 80 to be #define */
 static int msm8930_configure_headset_mic_gpios(void)
 {
 	int ret;
-	ret = gpio_request(80, "US_EURO_SWITCH");
+	ret = gpio_request(US_EURO_SWITCH_GPIO, "US_EURO_SWITCH");
 	if (ret) {
-		pr_err("%s: Failed to request gpio 80\n", __func__);
+		pr_err("%s: Failed to request gpio %d\n", __func__, US_EURO_SWITCH_GPIO);
 		return ret;
 	}
-	ret = gpio_direction_output(80, 0);
+	ret = gpio_direction_output(US_EURO_SWITCH_GPIO, 0);
 	if (ret) {
 		pr_err("%s: Unable to set direction\n", __func__);
-		gpio_free(80);
+		gpio_free(US_EURO_SWITCH_GPIO);
 	}
 	msm8930_headset_gpios_configured = 0;
 	return 0;
@@ -1321,12 +1375,26 @@ static int msm8930_configure_headset_mic_gpios(void)
 static void msm8930_free_headset_mic_gpios(void)
 {
 	if (msm8930_headset_gpios_configured)
-		gpio_free(80);
+		gpio_free(US_EURO_SWITCH_GPIO);
+}
+/* Jen Chang, 20121210 */
+
+static void snd_create_kernel_debuglevel_entries(void)
+{
+	if(kernel_debuglevel_dir != NULL) {
+		debugfs_create_u32("snd_dll", S_IRUGO | S_IWUGO, kernel_debuglevel_dir, (u32 *)(&SND_DLL));
+	} else {
+		printk("%s::create kernel debuglevel dir falied\n",__func__);
+	}
 }
 
 static int __init msm8930_audio_init(void)
 {
 	int ret;
+
+/* Jen Chang merge from detroit_2.0 for boot log */
+	printk("BootLog, +%s\n", __func__);
+/* Jen Chang, 20120924 */
 
 	if (!cpu_is_msm8930() && !cpu_is_msm8930aa() && !cpu_is_msm8627()) {
 		pr_err("%s: Not the right machine type\n", __func__);
@@ -1360,6 +1428,10 @@ static int __init msm8930_audio_init(void)
 		msm8930_headset_gpios_configured = 1;
 
 	atomic_set(&auxpcm_rsc_ref, 0);
+/* Jen Chang merge from detroit_2.0 for boot log */
+	snd_create_kernel_debuglevel_entries();
+	printk("BootLog, -%s, ret=%d\n", __func__, ret);
+/* Jen Chang, 20120924 */
 	return ret;
 
 }

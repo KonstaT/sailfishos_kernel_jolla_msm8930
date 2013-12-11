@@ -26,11 +26,61 @@
 #include <linux/i2c.h>
 
 #define PN544_DRIVER_NAME	"pn544"
+/* Jen Chang add for gpio and i2c address mapping */
+/* Fix me -- need to check hw board */
+#define PN544_HOST_INT_GPIO		6
+#define PN544_ENABLE_GPIO		7
+#define PN544_FW_RESET_GPIO		10
+#define PN544_I2C_ADDR			0x28
+/* -- Fix me */
+
+//add for kernel debug level
+enum pn544_debug_level {
+	NFC_CRITICIAL = 0,
+	NFC_PROBE,
+	NFC_DEBUGFS,
+	NFC_TEST,
+	NFC_INFO,
+	NFC_DEBUG,
+};
+
+union PN544_DEBUGLEVEL {
+	u32 debug_level;
+	char debug_byte[4];
+};
+
+extern union PN544_DEBUGLEVEL PN544_DEBUG_DLL;
+
+#define PN544_TEST_DLL_ON	(1 << 0)
+#define	PN544_INFO_DLL_ON	(1 << 7)
+#define	PN544_DEBUG_DLL_ON	(1 << 15)
+
+#ifdef CONFIG_BUILD_FACTORY
+#define pn544_printk(level, fmt, args...) \
+	do { \
+		if (level <= NFC_TEST) printk(fmt, ##args); \
+	} while(0)
+#else
+#define pn544_printk(level, fmt, args...) \
+	do { \
+		if (PN544_DEBUG_DLL.debug_level >= PN544_DEBUG_DLL_ON) { \
+			if (level <= NFC_DEBUG) printk(fmt, ##args); \
+		} else if (PN544_DEBUG_DLL.debug_level >= PN544_INFO_DLL_ON) { \
+			if (level <= NFC_INFO) printk(fmt, ##args); \
+		} else if (PN544_DEBUG_DLL.debug_level >= PN544_TEST_DLL_ON) { \
+			if (level <= NFC_TEST) printk(fmt, ##args); \
+		} else { \
+			if (level <= NFC_DEBUGFS) printk(fmt, ##args); } \
+	} while(0)
+#endif
+/* Jen Chang, 20121217 */
+
 #define PN544_MAXWINDOW_SIZE	7
 #define PN544_WINDOW_SIZE	4
 #define PN544_RETRIES		10
 #define PN544_MAX_I2C_TRANSFER	0x0400
 #define PN544_MSG_MAX_SIZE	0x21 /* at normal HCI mode */
+#define PN544_MAX_BUFFER_SIZE	512
 
 /* ioctl */
 #define PN544_CHAR_BASE		'P'
@@ -40,6 +90,14 @@
 #define PN544_SET_FW_MODE	PN544_IOW(2, unsigned int)
 #define PN544_GET_DEBUG		PN544_IOW(3, unsigned int)
 #define PN544_SET_DEBUG		PN544_IOW(4, unsigned int)
+#define PN544_GET_SH_VERSION	PN544_IOW(6, unsigned char**)
+/*
+ * PN544 power control via ioctl
+ * PN544_SET_PWR(0): power off
+ * PN544_SET_PWR(1): power on
+ * PN544_SET_PWR(2): reset and power on with firmware download enabled */
+#define PN544_MAGIC	0xE9
+#define PN544_SET_PWR	_IOW(PN544_MAGIC, 0x01, unsigned int)
 
 /* Timing restrictions (ms) */
 #define PN544_RESETVEN_TIME	30 /* 7 */
@@ -83,6 +141,47 @@ struct pn544_fw_packet {
 	unsigned char data[PN544_MAX_FW_DATA];
 };
 
+/* Jen Chang add for reading id and selftest scripts */
+#ifdef CONFIG_PN544_TEST
+enum script_type {
+	r_ver = 0,
+	w_test,
+	antenna_self_test,
+	swp_self_test,
+	switch_Tx_only,
+	hci_TypeA_reader,
+};
+
+union pn544_value {
+	u32 value;
+	u8	value_byte[4];
+};
+
+typedef struct chip_data_t {
+	union pn544_value sw_ver;
+	union pn544_value hw_ver;
+} chip_data_t;
+
+typedef struct card_data_t {
+	u8 uid_len;
+	union pn544_value uid[2];
+} card_data_t;
+
+typedef struct chip_test_data_t {
+	struct chip_data_t chip_version;
+	union pn544_value antenna_loop_tolerance;
+	union pn544_value antenna_selftest_threshold;
+	union pn544_value swp_selftest_result;
+	struct card_data_t card_data;
+	u8 switch_Tx_onoff;
+} chip_test_data_t;
+
+extern struct chip_test_data_t pn544_test_info;
+extern int PN544_NFC_TEST(int type, struct i2c_client *client,
+	struct chip_test_data_t *test_info);
+#endif
+/* Jen Chang, 20130114 */
+
 #ifdef __KERNEL__
 /* board config */
 struct pn544_nfc_platform_data {
@@ -91,6 +190,7 @@ struct pn544_nfc_platform_data {
 	void (*enable) (int fw);
 	int (*test) (void);
 	void (*disable) (void);
+	int irq_gpio;
 };
 #endif /* __KERNEL__ */
 

@@ -366,6 +366,10 @@ LINUXINCLUDE    := -I$(srctree)/arch/$(hdr-arch)/include \
                    $(if $(KBUILD_SRC), -I$(srctree)/include) \
                    -include $(srctree)/include/linux/kconfig.h
 
+# QISDA Bright Lee, 20111103, inject global include header in oem folder {
+LINUXINCLUDE	+= $(foreach inc, $(subst :, ,$(EXTRAINCLUDE)), -I$(inc))
+# } QISDA Bright Lee, 20111103
+
 KBUILD_CPPFLAGS := -D__KERNEL__
 
 KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \

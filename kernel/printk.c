@@ -154,6 +154,13 @@ static int log_buf_len = __LOG_BUF_LEN;
 static unsigned logged_chars; /* Number of chars produced since last read+clear operation */
 static int saved_console_loglevel = -1;
 
+/* Bright Lee, 20111122, reboot log { */
+#ifdef CONFIG_PANIC_LASTLOG
+#include <mach/ftags.h>
+PANIC_LOG_INIT(kmsg, "kmsg", __log_buf, LOGTYPE_RAW);
+#endif
+/* } Bright Lee, 20111122 */
+
 #ifdef CONFIG_KEXEC
 /*
  * This appends the listed symbols to /proc/vmcoreinfo
@@ -889,6 +896,40 @@ static inline void printk_delay(void)
 	}
 }
 
+/* Bright Lee, 20120430, redirect kmsg to android main log { */
+#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+#define KMSG_TOKEN_POOL_SIZE_SHIFT 9  // must bigger than 256, because there are more than 256 kmsg before main log init
+#define KMSG_TOKEN_POOL_SIZE (1 << KMSG_TOKEN_POOL_SIZE_SHIFT)
+#define KMSG_TOKEN_POOL_SIZE_MASK (KMSG_TOKEN_POOL_SIZE -1)
+
+typedef struct {
+	int idx;
+	int len;
+	int log_level;
+	struct task_struct *task;
+	long long clockt;
+} kmsg_token_struct;
+static kmsg_token_struct kmsg_token_pools[KMSG_TOKEN_POOL_SIZE];
+static unsigned short kmsg_widx = 0, kmsg_ridx;
+static struct workqueue_struct *printk_sync_wq;
+static struct work_struct	printk_sync_work;
+static atomic_t printk_sync_init_done = ATOMIC_INIT(0);
+static struct timespec time_delta = { 0, 0 };
+
+
+void calculate_time_delta_for_printk(void)
+{
+	struct timespec now = current_kernel_time();
+	struct timespec temp;
+	long long t = cpu_clock(smp_processor_id());
+
+	temp.tv_nsec = do_div(t, 1000000000);
+	temp.tv_sec = (unsigned long )t;
+	time_delta = timespec_sub(now, temp);
+}
+#endif
+/* } Bright Lee, 20120430 */
+
 asmlinkage int vprintk(const char *fmt, va_list args)
 {
 	int printed_len = 0;
@@ -982,6 +1023,14 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 				printed_len += 3;
 			}
 
+			/* Bright Lee, 20120430, redirect kmsg to android main log { */
+			#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+			kmsg_token_pools[kmsg_widx].log_level = current_log_level;
+			kmsg_token_pools[kmsg_widx].idx = log_end;
+			kmsg_token_pools[kmsg_widx].task = current;
+			#endif
+			/* } Bright Lee, 20120430 */
+
 			if (printk_time) {
 				/* Add the current time stamp */
 				char tbuf[50], *tp;
@@ -990,6 +1039,11 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 				unsigned long nanosec_rem;
 
 				t = cpu_clock(printk_cpu);
+				/* Bright Lee, 20120430, redirect kmsg to android main log { */
+				#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+				kmsg_token_pools[kmsg_widx].clockt = t;
+				#endif
+				/* } Bright Lee, 20120430 */
 				nanosec_rem = do_div(t, 1000000000);
 				tlen = sprintf(tbuf, "[%5lu.%06lu] ",
 						(unsigned long) t,
@@ -1000,13 +1054,27 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 				printed_len += tlen;
 			}
 
-			if (!*p)
+			if (!*p)  {
+				/* Bright Lee, 20120430, redirect kmsg to android main log { */
+				#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+				kmsg_token_pools[kmsg_widx].len = log_end - kmsg_token_pools[kmsg_widx].idx;
+				kmsg_widx = (kmsg_widx + 1) & KMSG_TOKEN_POOL_SIZE_MASK;
+				#endif
+				/* } Bright Lee, 20120430 */
 				break;
+			}
 		}
 
 		emit_log_char(*p);
-		if (*p == '\n')
+		if (*p == '\n')  {
+			/* Bright Lee, 20120430, redirect kmsg to android main log { */
+			#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+			kmsg_token_pools[kmsg_widx].len = log_end - kmsg_token_pools[kmsg_widx].idx;
+			kmsg_widx = (kmsg_widx + 1) & KMSG_TOKEN_POOL_SIZE_MASK;
+			#endif
+			/* } Bright Lee, 20120430 */
 			new_text_line = 1;
+		}
 	}
 
 	/*
@@ -1025,6 +1093,14 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	lockdep_on();
 out_restore_irqs:
 	local_irq_restore(flags);
+
+	/* Bright Lee, 20120430, redirect kmsg to android main log { */
+	#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+	if (likely(atomic_read(&printk_sync_init_done) == 1)) {
+		queue_work(printk_sync_wq, &printk_sync_work);
+	}
+	#endif
+	/* } Bright Lee, 20120430 */
 
 	return printed_len;
 }
@@ -1191,6 +1267,12 @@ void suspend_console(void)
 
 void resume_console(void)
 {
+	/* Bright Lee, 20120430, redirect kmsg to android main log, resync xtime and clockt { */
+	#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+	calculate_time_delta_for_printk();
+	#endif
+	/* } Bright Lee, 20120430 */
+
 	if (!console_suspend_enabled)
 		return;
 	down(&console_sem);
@@ -1876,3 +1958,51 @@ void kmsg_dump(enum kmsg_dump_reason reason)
 	rcu_read_unlock();
 }
 #endif
+
+/* Bright Lee, 20120430, redirect kmsg to android main log { */
+#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+ssize_t logger_kernel_write(int printk_idx, int msg_len, struct timespec time, struct task_struct *task, int loglevel);
+
+int log_buf_copy_for_alog(char *dest, int idx, int len) // instead of log_buf_copy, need to remove the limitation check
+{
+	int ret = len;
+
+	while (len-- > 0)
+		dest[len] = LOG_BUF(idx + len);
+
+	return ret;
+}
+
+
+
+static void flush_kmsg_to_mainlog(struct work_struct *w)
+{
+	kmsg_token_struct *ptr;
+	while (kmsg_ridx != kmsg_widx) {
+		struct timespec temp, printk_time;
+		ptr = &kmsg_token_pools[kmsg_ridx];
+		temp.tv_nsec = do_div(ptr->clockt, 1000000000);
+		temp.tv_sec = (unsigned long )ptr->clockt;
+		printk_time = timespec_add (time_delta, temp);
+		logger_kernel_write(ptr->idx, ptr->len, printk_time, ptr->task, ptr->log_level);
+		kmsg_ridx = (kmsg_ridx + 1) & KMSG_TOKEN_POOL_SIZE_MASK;
+	}
+}
+
+
+static int __init printk_sync_init(void)
+{
+	calculate_time_delta_for_printk	();
+	printk_sync_wq = create_singlethread_workqueue("printk_sync");
+	INIT_WORK(&printk_sync_work, flush_kmsg_to_mainlog);
+	atomic_set(&printk_sync_init_done, 1);
+
+	queue_work(printk_sync_wq, &printk_sync_work);  // flush the buffered kmsg to main log
+
+	return 1;
+}
+
+late_initcall_sync(printk_sync_init); // later than rtc_hctosys which set kernel time and invoke by late_initcall
+#endif
+/* } Bright Lee, 20120430 */
+

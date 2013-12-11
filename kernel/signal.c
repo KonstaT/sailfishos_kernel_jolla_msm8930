@@ -38,6 +38,7 @@
 #include <asm/siginfo.h>
 #include <asm/cacheflush.h>
 #include "audit.h"	/* audit_signal_info() */
+#include <mach/kevent.h>	//Terry Cheng, 20130507, Trigger abnormal camera usage when mm-qcamera-daemon receive signal
 
 /*
  * SLAB caches for signal bits.
@@ -482,6 +483,9 @@ flush_signal_handlers(struct task_struct *t, int force_default)
 		if (force_default || ka->sa.sa_handler != SIG_IGN)
 			ka->sa.sa_handler = SIG_DFL;
 		ka->sa.sa_flags = 0;
+#ifdef SA_RESTORER
+		ka->sa.sa_restorer = NULL;
+#endif
 		sigemptyset(&ka->sa.sa_mask);
 		ka++;
 	}
@@ -855,12 +859,14 @@ static void ptrace_trap_notify(struct task_struct *t)
  * Returns true if the signal should be actually delivered, otherwise
  * it should be dropped.
  */
-static int prepare_signal(int sig, struct task_struct *p, bool force)
+static bool prepare_signal(int sig, struct task_struct *p, bool force)
 {
 	struct signal_struct *signal = p->signal;
 	struct task_struct *t;
 
-	if (unlikely(signal->flags & SIGNAL_GROUP_EXIT)) {
+	if (signal->flags & (SIGNAL_GROUP_EXIT | SIGNAL_GROUP_COREDUMP)) {
+		if (signal->flags & SIGNAL_GROUP_COREDUMP)
+			return sig == SIGKILL;
 		/*
 		 * The process is in the middle of dying, nothing to do.
 		 */
@@ -1055,6 +1061,17 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 	struct sigqueue *q;
 	int override_rlimit;
 	int ret = 0, result;
+
+        /* Bright Lee, 20120607, log thread abnormal termination for android reload { */
+        if ((sig <= SIGKILL || sig == SIGSTOP || sig == SIGSEGV || sig == SIGPIPE ) && sig != SIGALRM) {
+                printk ("%s(%d) send signal %d to %s(%d)\n", current->comm, current->tgid, sig, t->comm, t->tgid);
+		   /* Terry Cheng, 20130507, Trigger abnormal camera usage when mm-qcamera-daemon receive some signal {*/	
+		   if((sig != SIGSTOP)&&((!strncmp(t->comm, "mm-qcamera-daem", 15))&&(current->tgid != t->tgid))){
+			kevent_trigger(KEVENT_COMP_CAMERA);
+		   }	
+		   /* } Terry Cheng, 20130507, Trigger abnormal camera usage when mm-qcamera-daemon receive some signal */	
+        }
+        /* } Bright Lee, 20120607 */
 
 	assert_spin_locked(&t->sighand->siglock);
 

@@ -66,5 +66,8 @@ struct logger_entry {
 #define LOGGER_FLUSH_LOG		_IO(__LOGGERIO, 4) /* flush log */
 #define LOGGER_GET_VERSION		_IO(__LOGGERIO, 5) /* abi version */
 #define LOGGER_SET_VERSION		_IO(__LOGGERIO, 6) /* abi version */
+/* Bright Lee, 20130329, disable VERBOSE/DEBUG log in logcat { */
+#define LOGGER_ALL_PRI			_IO(__LOGGERIO, 7) /* enable all log include DEBUG/VERBOSE */
+/* } Bright Lee, 20130329 */
 
 #endif /* _LINUX_LOGGER_H */

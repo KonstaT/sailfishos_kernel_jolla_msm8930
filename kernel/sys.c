@@ -54,6 +54,9 @@
 #include <asm/io.h>
 #include <asm/unistd.h>
 
+/* Terry Cheng, 20111213, Add normal reboot reason {*/
+#include <mach/boot_mode.h>
+/* } Terry Cheng, 20111213, Add normal reboot reason */
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a,b)	(-EINVAL)
 #endif
@@ -374,14 +377,17 @@ void kernel_restart(char *cmd)
 }
 EXPORT_SYMBOL_GPL(kernel_restart);
 
-static void kernel_shutdown_prepare(enum system_states state)
+//Terry, Add power off reason +
+static void kernel_shutdown_prepare(enum system_states state, char *cmd)
 {
 	blocking_notifier_call_chain(&reboot_notifier_list,
-		(state == SYSTEM_HALT)?SYS_HALT:SYS_POWER_OFF, NULL);
+		(state == SYSTEM_HALT)?SYS_HALT:SYS_POWER_OFF, cmd);
 	system_state = state;
 	usermodehelper_disable();
 	device_shutdown();
 }
+//Terry, Add power off reason -
+
 /**
  *	kernel_halt - halt the system
  *
@@ -389,7 +395,8 @@ static void kernel_shutdown_prepare(enum system_states state)
  */
 void kernel_halt(void)
 {
-	kernel_shutdown_prepare(SYSTEM_HALT);
+	//Terry, Add power off reason
+	kernel_shutdown_prepare(SYSTEM_HALT, NULL);
 	syscore_shutdown();
 	printk(KERN_EMERG "System halted.\n");
 	kmsg_dump(KMSG_DUMP_HALT);
@@ -403,9 +410,10 @@ EXPORT_SYMBOL_GPL(kernel_halt);
  *
  *	Shutdown everything and perform a clean system power_off.
  */
-void kernel_power_off(void)
+//Terry, Add power off reason +
+void kernel_power_off(char *cmd)
 {
-	kernel_shutdown_prepare(SYSTEM_POWER_OFF);
+	kernel_shutdown_prepare(SYSTEM_POWER_OFF,cmd);
 	if (pm_power_off_prepare)
 		pm_power_off_prepare();
 	disable_nonboot_cpus();
@@ -414,9 +422,21 @@ void kernel_power_off(void)
 	kmsg_dump(KMSG_DUMP_POWEROFF);
 	machine_power_off();
 }
+//Terry, Add power off reason -
 EXPORT_SYMBOL_GPL(kernel_power_off);
 
 static DEFINE_MUTEX(reboot_mutex);
+
+
+/* Bright Lee, 20120214, save botup reason for android reload { */
+#ifdef CONFIG_PANIC_LASTLOG
+void store_panic_caller(int addr);
+static void android_reload(void)
+{
+	return;
+}
+#endif
+/* } Bright Lee, 20120214 */
 
 /*
  * Reboot system call: for obvious reasons only root may call it,
@@ -462,7 +482,10 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	mutex_lock(&reboot_mutex);
 	switch (cmd) {
 	case LINUX_REBOOT_CMD_RESTART:
-		kernel_restart(NULL);
+		/* Terry Cheng, 20111213, Add normal reboot reason {*/
+		//kernel_restart(NULL);
+		kernel_restart(NONE_MODE_STR);
+		/* }Terry Cheng, 20111213, Add normal reboot reason */
 		break;
 
 	case LINUX_REBOOT_CMD_CAD_ON:
@@ -479,7 +502,9 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		panic("cannot halt");
 
 	case LINUX_REBOOT_CMD_POWER_OFF:
-		kernel_power_off();
+		//Terry, Add power off reason +
+		kernel_power_off("User");
+		//Terry, Add power off reason -
 		do_exit(0);
 		break;
 
@@ -489,6 +514,13 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 			break;
 		}
 		buffer[sizeof(buffer) - 1] = '\0';
+		/* Bright Lee, 20120214, save botup reason for android reload { */
+		#ifdef CONFIG_PANIC_LASTLOG
+		if (!strcmp (buffer, ABNORMAL_REBOOT_STR) && !strcmp (current->comm, "system_server")) {
+			store_panic_caller ((int)&android_reload);
+		}
+		#endif
+		/* } Bright Lee, 20120214 */
 
 		kernel_restart(buffer);
 		break;
@@ -2051,7 +2083,10 @@ int orderly_poweroff(bool force)
 		   sync and poweroff asap.  Or not even bother syncing
 		   if we're doing an emergency shutdown? */
 		emergency_sync();
-		kernel_power_off();
+		//Terry, Add power off reason +
+		//kernel_power_off();
+		kernel_power_off("Orderly");
+		//Terry, Add power off reason +
 	}
 
 	return ret;

@@ -107,9 +107,8 @@ struct gs_port {
 
 	unsigned		open_count;
 	bool			openclose;	/* open/close in progress */
+	bool			abandoned;	/* no longer in ports array */
 	u8			port_num;
-
-	wait_queue_head_t	close_wait;	/* wait for last close */
 
 	struct list_head	read_pool;
 	int read_started;
@@ -822,6 +821,16 @@ static int gs_open(struct tty_struct *tty, struct file *file)
 	/* Do the "real open" */
 	spin_lock_irq(&port->port_lock);
 
+	if (port->abandoned) {
+		/* gserial_cleanup() was called during opening,
+		 * this is the last reference */
+		pr_debug("gs_open: ttyGS%d abandoned, cleaning up\n",
+			port->port_num);
+		spin_unlock_irq(&port->port_lock);
+		kfree(port);
+		return -ENODEV;
+	}
+
 	/* allocate circular buffer on first open */
 	if (port->port_write_buf.buf_buf == NULL) {
 
@@ -937,8 +946,6 @@ static void gs_close(struct tty_struct *tty, struct file *file)
 	pr_debug("gs_close: ttyGS%d (%p,%p) done!\n",
 			port->port_num, tty, file);
 
-	wake_up_interruptible(&port->close_wait);
-
 	/*
 	 * Freeing the previously queued requests as they are
 	 * allocated again as a part of gs_open()
@@ -954,6 +961,17 @@ static void gs_close(struct tty_struct *tty, struct file *file)
 	}
 	port->read_allocated = port->read_started =
 		port->write_allocated = port->write_started = 0;
+
+	if (port->abandoned) {
+		/* gserial_cleanup() was called while this port was open,
+		 * so its cleanup was delayed. Do it now. */
+		pr_debug("gs_close: ttyGS%d abandoned, cleaning up\n",
+			port->port_num);
+		spin_unlock_irq(&port->port_lock);
+		kfree(port);
+		return;
+	}
+
 exit:
 	spin_unlock_irq(&port->port_lock);
 }
@@ -1175,7 +1193,6 @@ gs_port_alloc(unsigned port_num, struct usb_cdc_line_coding *coding)
 		return -ENOMEM;
 
 	spin_lock_init(&port->port_lock);
-	init_waitqueue_head(&port->close_wait);
 	init_waitqueue_head(&port->drain_wait);
 
 	INIT_WORK(&port->push, gs_rx_push);
@@ -1413,23 +1430,12 @@ fail:
 	return status;
 }
 
-static int gs_closed(struct gs_port *port)
-{
-	int cond;
-
-	spin_lock_irq(&port->port_lock);
-	cond = (port->open_count == 0) && !port->openclose;
-	spin_unlock_irq(&port->port_lock);
-	return cond;
-}
-
 /**
  * gserial_cleanup - remove TTY-over-USB driver and devices
- * Context: may sleep
  *
  * This is called to free all resources allocated by @gserial_setup().
- * Accordingly, it may need to wait until some open /dev/ files have
- * closed.
+ * It will unregister the /dev/ttyGS* devices, but if any are still open
+ * it will leave the port structure around to be freed by gs_close().
  *
  * The caller must have issued @gserial_disconnect() for any ports
  * that had previously been connected, so that there is never any
@@ -1448,6 +1454,8 @@ void gserial_cleanup(void)
 		tty_unregister_device(gs_tty_driver, i);
 
 	for (i = 0; i < n_ports; i++) {
+		int closed;
+
 		/* prevent new opens */
 		mutex_lock(&ports[i].lock);
 		port = ports[i].port;
@@ -1456,12 +1464,19 @@ void gserial_cleanup(void)
 
 		cancel_work_sync(&port->push);
 
-		/* wait for old opens to finish */
-		wait_event(port->close_wait, gs_closed(port));
+		spin_lock_irq(&port->port_lock);
+		port->abandoned = true;
+		closed = (port->open_count == 0) && !port->openclose;
+		spin_unlock_irq(&port->port_lock);
 
 		WARN_ON(port->port_usb != NULL);
 
-		kfree(port);
+		/*
+		 * If it's already closed we can free it right away.
+		 * If not, gs_close() will free it on the last close.
+		 */
+		if (closed)
+			kfree(port);
 	}
 	n_ports = 0;
 

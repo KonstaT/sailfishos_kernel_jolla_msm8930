@@ -27,13 +27,14 @@
 
 #include "devices.h"
 #include "board-8930.h"
+#include "../../../drivers/leds/leds-pm8xxx.h"
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MSM_FB_PRIM_BUF_SIZE \
-		(roundup((1920 * 1088 * 4), 4096) * 3) /* 4 bpp x 3 pages */
+		(roundup((960 * 544 * 4), 4096) * 3) /* 4 bpp x 3 pages */
 #else
 #define MSM_FB_PRIM_BUF_SIZE \
-		(roundup((1920 * 1088 * 4), 4096) * 2) /* 4 bpp x 2 pages */
+		(roundup((960 * 544 * 4), 4096) * 2) /* 4 bpp x 2 pages */
 #endif
 /* Note: must be multiple of 4096 */
 #define MSM_FB_SIZE roundup(MSM_FB_PRIM_BUF_SIZE, 4096)
@@ -58,6 +59,10 @@
 #define MIPI_VIDEO_CHIMEI_WXGA_PANEL_NAME	"mipi_video_chimei_wxga"
 #define MIPI_VIDEO_SIMULATOR_VGA_PANEL_NAME	"mipi_video_simulator_vga"
 #define MIPI_CMD_RENESAS_FWVGA_PANEL_NAME	"mipi_cmd_renesas_fwvga"
+#define MIPI_CMD_TRULY_OTM9608A_QHD_PANEL_NAME			"mipi_cmd_truly_otm9608a_qhd"
+#define MIPI_VIDEO_TRULY_OTM9608A_QHD_PANEL_NAME			"mipi_video_truly_otm9608a_qhd"
+#define MIPI_CMD_TRUST_NT35516_QHD_PANEL_NAME	"mipi_cmd_trust_nt35516_qhd"
+#define MIPI_VIDEO_TRUST_NT35516_QHD_PANEL_NAME	"mipi_video_trust_nt35516_qhd"
 #define HDMI_PANEL_NAME	"hdmi_msm"
 #define MHL_PANEL_NAME "hdmi_msm,mhl_8334"
 #define TVOUT_PANEL_NAME	"tvout_msm"
@@ -77,13 +82,37 @@ static struct resource msm_fb_resources[] = {
 
 static int msm_fb_detect_panel(const char *name)
 {
+// for Boston
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A)
+	if (!strncmp(name, MIPI_CMD_TRULY_OTM9608A_QHD_PANEL_NAME,
+			strnlen(MIPI_CMD_TRULY_OTM9608A_QHD_PANEL_NAME,
+				PANEL_NAME_MAX_LEN)))
+		return 0;
+#else // for Egypt
+	if (!strncmp(name, MIPI_CMD_TRUST_NT35516_QHD_PANEL_NAME,
+			strnlen(MIPI_CMD_TRUST_NT35516_QHD_PANEL_NAME,
+				PANEL_NAME_MAX_LEN)))
+		return 0;
+#endif
+
+#if !defined(CONFIG_FB_MSM_LVDS_MIPI_PANEL_DETECT) && \
+	!defined(CONFIG_FB_MSM_MIPI_PANEL_DETECT)
+	// for Boston
+	if (!strncmp(name, MIPI_VIDEO_TRULY_OTM9608A_QHD_PANEL_NAME,
+			strnlen(MIPI_VIDEO_TRULY_OTM9608A_QHD_PANEL_NAME,
+				PANEL_NAME_MAX_LEN)))
+		return 0;
+	// for Egypt
+	if (!strncmp(name, MIPI_VIDEO_TRUST_NT35516_QHD_PANEL_NAME,
+			strnlen(MIPI_VIDEO_TRUST_NT35516_QHD_PANEL_NAME,
+				PANEL_NAME_MAX_LEN)))
+		return 0;
+
 	if (!strncmp(name, MIPI_CMD_NOVATEK_QHD_PANEL_NAME,
 			strnlen(MIPI_CMD_NOVATEK_QHD_PANEL_NAME,
 				PANEL_NAME_MAX_LEN)))
 		return 0;
 
-#if !defined(CONFIG_FB_MSM_LVDS_MIPI_PANEL_DETECT) && \
-	!defined(CONFIG_FB_MSM_MIPI_PANEL_DETECT)
 	if (!strncmp(name, MIPI_VIDEO_NOVATEK_QHD_PANEL_NAME,
 			strnlen(MIPI_VIDEO_NOVATEK_QHD_PANEL_NAME,
 				PANEL_NAME_MAX_LEN)))
@@ -132,6 +161,7 @@ static struct platform_device msm_fb_device = {
 };
 
 static bool dsi_power_on;
+#if 0  // Jackie
 static struct mipi_dsi_panel_platform_data novatek_pdata;
 static void pm8917_gpio_set_backlight(int bl_level)
 {
@@ -141,6 +171,7 @@ static void pm8917_gpio_set_backlight(int bl_level)
 	else
 		gpio_set_value_cansleep(gpio24, 0);
 }
+#endif
 
 /*
  * TODO: When physical 8930/PM8038 hardware becomes
@@ -148,12 +179,31 @@ static void pm8917_gpio_set_backlight(int bl_level)
  * appropriate function.
  */
 #define DISP_RST_GPIO 58
+
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) || defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+// Jackie 20121203, add to keep splash during Bootloader to OS.
+// This should match with Bootloader at the same time.
+#define CONFIG_LCM_KEEP_SPLASH
+
+void mipi_dsi_cdp_panel_reset(void)
+{
+	// Jackie 20120828, use RESX case2 of LCM spec.	
+	usleep_range(2000, 2000);
+	gpio_direction_output(DISP_RST_GPIO, 1);
+	usleep_range(20000, 20000);
+}
+#endif
+
+#if 0 // Jackie
 #define DISP_3D_2D_MODE 1
+#endif
 static int mipi_dsi_cdp_panel_power(int on)
 {
 	static struct regulator *reg_l8, *reg_l23, *reg_l2;
 	/* Control backlight GPIO (24) directly when using PM8917 */
+#if 0 // Jackie
 	int gpio24 = PM8917_GPIO_PM_TO_SYS(24);
+#endif
 	int rc;
 
 	pr_debug("%s: state : %d\n", __func__, on);
@@ -181,7 +231,11 @@ static int mipi_dsi_cdp_panel_power(int on)
 				PTR_ERR(reg_l2));
 			return -ENODEV;
 		}
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) || defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+		rc = regulator_set_voltage(reg_l8, 2800000, 2800000); // VCI
+#else
 		rc = regulator_set_voltage(reg_l8, 2800000, 3000000);
+#endif
 		if (rc) {
 			pr_err("set_voltage l8 failed, rc=%d\n", rc);
 			return -EINVAL;
@@ -203,6 +257,7 @@ static int mipi_dsi_cdp_panel_power(int on)
 			gpio_free(DISP_RST_GPIO);
 			return -ENODEV;
 		}
+#if 0 // Jackie
 		rc = gpio_request(DISP_3D_2D_MODE, "disp_3d_2d");
 		if (rc) {
 			pr_err("request gpio DISP_3D_2D_MODE failed, rc=%d\n",
@@ -227,7 +282,91 @@ static int mipi_dsi_cdp_panel_power(int on)
 			novatek_pdata.gpio_set_backlight =
 				pm8917_gpio_set_backlight;
 		}
+#endif
+
 		dsi_power_on = true;
+
+#ifdef CONFIG_LCM_KEEP_SPLASH
+		// 20130325 Jackie, both PMIC_PWM and LCM_PWM case, turn off PMIC_WLED backlight
+		// Even LCM_PWM mode, PMIC_WLED still need to be off.
+		// WLED output current = CABC(LCM duty cycle)*PWM(PM8038 setting)*ILED(LED current)
+		led_wled_set_backlight(0);
+		// Jackie 20130325, use RESX case2 of LCM spec.
+		gpio_direction_output(DISP_RST_GPIO, 0);
+
+		// Jackie 20120905, [LCD_Spec] for LCD_RESET pin should hold 120ms after it was pull low.
+		// Then it can turn off the power of LCM.
+		mdelay(120);
+
+		// Jackie: turn on power first(it was already on by Bootloader actually)
+		rc = regulator_set_optimum_mode(reg_l8, 100000);
+		if (rc < 0) {
+			pr_err("set_optimum_mode l8 failed, rc=%d\n", rc);
+			return -EINVAL;
+		}
+		rc = regulator_set_optimum_mode(reg_l23, 100000);
+		if (rc < 0) {
+			pr_err("set_optimum_mode l23 failed, rc=%d\n", rc);
+			return -EINVAL;
+		}
+		rc = regulator_set_optimum_mode(reg_l2, 100000);
+		if (rc < 0) {
+			pr_err("set_optimum_mode l2 failed, rc=%d\n", rc);
+			return -EINVAL;
+		}
+		rc = regulator_enable(reg_l8);
+		if (rc) {
+			pr_err("enable l8 failed, rc=%d\n", rc);
+			return -ENODEV;
+		}
+		rc = regulator_enable(reg_l23);
+		if (rc) {
+			pr_err("enable l8 failed, rc=%d\n", rc);
+			return -ENODEV;
+		}
+		rc = regulator_enable(reg_l2);
+		if (rc) {
+			pr_err("enable l2 failed, rc=%d\n", rc);
+			return -ENODEV;
+		}
+		mdelay(20);
+
+		// Jackie: turn off power here.
+		// we want the power is off as default setting. But it was already on by Bootloader.
+		rc = regulator_disable(reg_l2);
+		if (rc) {
+			pr_err("disable reg_l2 failed, rc=%d\n", rc);
+			return -ENODEV;
+		}
+		rc = regulator_disable(reg_l23);
+		if (rc) {
+			pr_err("disable reg_l23 failed, rc=%d\n", rc);
+			return -ENODEV;
+		}
+		rc = regulator_disable(reg_l8);
+		if (rc) {
+			pr_err("disable reg_l8 failed, rc=%d\n", rc);
+			return -ENODEV;
+		}
+
+		rc = regulator_set_optimum_mode(reg_l8, 100);
+		if (rc < 0) {
+			pr_err("set_optimum_mode l8 failed, rc=%d\n", rc);
+			return -EINVAL;
+		}
+		rc = regulator_set_optimum_mode(reg_l23, 100);
+		if (rc < 0) {
+			pr_err("set_optimum_mode l23 failed, rc=%d\n", rc);
+			return -EINVAL;
+		}
+		rc = regulator_set_optimum_mode(reg_l2, 100);
+		if (rc < 0) {
+			pr_err("set_optimum_mode l2 failed, rc=%d\n", rc);
+			return -EINVAL;
+		}
+		mdelay(20);
+#endif
+
 	}
 
 	if (on) {
@@ -261,6 +400,12 @@ static int mipi_dsi_cdp_panel_power(int on)
 			pr_err("enable l2 failed, rc=%d\n", rc);
 			return -ENODEV;
 		}
+
+// Jackie
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) || defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+		// move LCM_RESET into mipi_dsi_cdp_panel_reset(),
+		// and it will be called by mipi_auo_lcd_on() before send MIPI commands.
+#else
 		usleep(10000);
 		gpio_set_value(DISP_RST_GPIO, 1);
 		usleep(10);
@@ -269,23 +414,29 @@ static int mipi_dsi_cdp_panel_power(int on)
 		gpio_set_value(DISP_RST_GPIO, 1);
 		gpio_set_value(DISP_3D_2D_MODE, 1);
 		usleep(20);
+#endif
+
 	} else {
 
 		gpio_set_value(DISP_RST_GPIO, 0);
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) || defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+		// LCM datasheet: (Min.) 4 frames
+		msleep(120);
+#endif
 
 		rc = regulator_disable(reg_l2);
 		if (rc) {
 			pr_err("disable reg_l2 failed, rc=%d\n", rc);
 			return -ENODEV;
 		}
-		rc = regulator_disable(reg_l8);
-		if (rc) {
-			pr_err("disable reg_l8 failed, rc=%d\n", rc);
-			return -ENODEV;
-		}
 		rc = regulator_disable(reg_l23);
 		if (rc) {
 			pr_err("disable reg_l23 failed, rc=%d\n", rc);
+			return -ENODEV;
+		}
+		rc = regulator_disable(reg_l8);
+		if (rc) {
+			pr_err("disable reg_l8 failed, rc=%d\n", rc);
 			return -ENODEV;
 		}
 		rc = regulator_set_optimum_mode(reg_l8, 100);
@@ -303,8 +454,10 @@ static int mipi_dsi_cdp_panel_power(int on)
 			pr_err("set_optimum_mode l2 failed, rc=%d\n", rc);
 			return -EINVAL;
 		}
+#if 0 // Jackie
 		gpio_set_value(DISP_3D_2D_MODE, 0);
 		usleep(20);
+#endif
 	}
 	return 0;
 }
@@ -471,6 +624,51 @@ void __init msm8930_mdp_writeback(struct memtype_reserve* reserve_table)
 #endif
 }
 
+// for Boston
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A)
+
+#define LPM_CHANNEL0 0
+static int truly_otm9608a_gpio[] = {LPM_CHANNEL0};
+
+static struct mipi_dsi_panel_platform_data truly_otm9608a_pdata = {
+	.gpio = truly_otm9608a_gpio,
+#if !defined(CONFIG_FB_MSM_BACKLIGHT_LCMPWM)
+	.enable_wled_bl_ctrl = 0x1,
+#endif
+};
+
+static struct platform_device mipi_dsi_truly_otm9608a_panel_device = {
+	.name = "mipi_truly_otm9608a",
+	.id = 0,
+	.dev = {
+		.platform_data = &truly_otm9608a_pdata,
+	}
+};
+
+// for Egypt
+#elif defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+
+#define LPM_CHANNEL0 0
+static int trust_nt35516_gpio[] = {LPM_CHANNEL0};
+
+static struct mipi_dsi_panel_platform_data trust_nt35516_pdata = {
+	.gpio = trust_nt35516_gpio,
+#if !defined(CONFIG_FB_MSM_BACKLIGHT_LCMPWM)
+	.enable_wled_bl_ctrl = 0x1,
+#endif
+};
+
+static struct platform_device mipi_dsi_trust_nt35516_panel_device = {
+	.name = "mipi_trust_nt35516",
+	.id = 0,
+	.dev = {
+		.platform_data = &trust_nt35516_pdata,
+	}
+};
+
+
+#else
+
 #define LPM_CHANNEL0 0
 static int toshiba_gpio[] = {LPM_CHANNEL0};
 
@@ -485,9 +683,11 @@ static struct platform_device mipi_dsi_toshiba_panel_device = {
 		.platform_data = &toshiba_pdata,
 	}
 };
+#endif
 
 #define FPGA_3D_GPIO_CONFIG_ADDR	0xB5
 
+#if 0 // Jackie
 static struct mipi_dsi_phy_ctrl dsi_novatek_cmd_mode_phy_db = {
 
 /* DSI_BIT_CLK at 500MHz, 2 lane, RGB888 */
@@ -518,6 +718,7 @@ static struct platform_device mipi_dsi_novatek_panel_device = {
 		.platform_data = &novatek_pdata,
 	}
 };
+#endif
 
 #ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
 static struct resource hdmi_msm_resources[] = {
@@ -578,7 +779,9 @@ static struct platform_device wfd_device = {
 };
 #endif
 
-#ifdef CONFIG_MSM_BUS_SCALING
+// Jackie 20120906, porting JB, fix compiler error when remove HDMI function.
+#if defined(CONFIG_MSM_BUS_SCALING) && defined(CONFIG_FB_MSM_HDMI_MSM_PANEL)
+//#ifdef CONFIG_MSM_BUS_SCALING
 static struct msm_bus_vectors dtv_bus_init_vectors[] = {
 	{
 		.src = MSM_BUS_MASTER_MDP_PORT0,
@@ -823,17 +1026,28 @@ void __init msm8930_init_fb(void)
 	platform_device_register(&wfd_device);
 #endif
 
+// for Boston
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A)
+	platform_device_register(&mipi_dsi_truly_otm9608a_panel_device);
+// for Egypt
+#elif defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+	platform_device_register(&mipi_dsi_trust_nt35516_panel_device);
+#else
 	platform_device_register(&mipi_dsi_novatek_panel_device);
+#endif
 
 #ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
 	platform_device_register(&hdmi_msm_device);
 #endif
 
+#if 0 // Jackie
 	platform_device_register(&mipi_dsi_toshiba_panel_device);
-
+#endif
 	msm_fb_register_device("mdp", &mdp_pdata);
 	msm_fb_register_device("mipi_dsi", &mipi_dsi_pdata);
-#ifdef CONFIG_MSM_BUS_SCALING
+// Jackie 20120906, porting JB, fix compiler error when remove HDMI function.
+#if defined(CONFIG_MSM_BUS_SCALING) && defined(CONFIG_FB_MSM_HDMI_MSM_PANEL)
+//#ifdef CONFIG_MSM_BUS_SCALING
 	msm_fb_register_device("dtv", &dtv_pdata);
 #endif
 }
@@ -873,5 +1087,8 @@ void __init msm8930_set_display_params(char *prim_panel, char *ext_panel)
 		}
 	}
 
+// Jackie
+#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
 	hdmi_msm_data.is_mhl_enabled = mhl_display_enabled;
+#endif
 }

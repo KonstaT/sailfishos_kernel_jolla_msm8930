@@ -24,6 +24,14 @@
 #endif
 #include "power.h"
 
+/* Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long {*/
+#include <mach/kevent.h>						
+/* } Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long */
+//20121102, Terry Cheng, Check whether abnormal compoents using
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif  //CONFIG_PM_LOG
+
 enum {
 	DEBUG_EXIT_SUSPEND = 1U << 0,
 	DEBUG_WAKEUP = 1U << 1,
@@ -51,6 +59,21 @@ static DECLARE_COMPLETION(suspend_sys_sync_comp);
 struct workqueue_struct *suspend_work_queue;
 struct wake_lock main_wake_lock;
 suspend_state_t requested_suspend_state = PM_SUSPEND_MEM;
+/* Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch do to notify log master when wake lock too long {*/
+struct wake_lock watchdog_wake_lock;
+static struct wake_lock *service_wake_lock = NULL;
+static struct wake_lock *charger_wake_lock = NULL;
+static struct wake_lock *usb_wake_lock = NULL;	//Terry Cheng, 20121018, Check usb plug in wake lock 
+#define WAKE_LOCK_WATCH_DOG_TIME HZ*60*60	//1 hour
+#define SUSPEND_WATCH_DOG_TIME 	HZ*60*3	//3 min
+#define WAKELOCK_WAKELOCK_NAME	"watchdog"
+/* Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch do to notify log master when wake lock too long {*/
+
+/* Terry Cheng, 20130604, Remove hardcode and change to use module parameter to control {*/
+static unsigned long wakelock_watchdog_time = WAKE_LOCK_WATCH_DOG_TIME;
+module_param_named(wakelock_watchdog_time, wakelock_watchdog_time, ulong, S_IRUGO | S_IWUSR | S_IWGRP);
+/* } Terry Cheng, 20130604, Remove hardcode and change to use module parameter to control */
+
 static struct wake_lock unknown_wakeup;
 static struct wake_lock suspend_backoff_lock;
 
@@ -252,7 +275,36 @@ static long has_wake_lock_locked(int type)
 	}
 	return max_timeout;
 }
+/* Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long {*/
+#ifdef CONFIG_WAKELOCK_WATCHDOG
+static void watchdog_func(unsigned long data)
+{
 
+	unsigned long irqflags;
+	//Check whether charger hold wake lock
+	//Terry Cheng, 20121018, Check usb plug in wake lock, audio components and main wakelock
+	if ((!is_charger_usb_plugin()) && (!pmlog_check_audio_components()) && (!wake_lock_active(&main_wake_lock)))
+	{
+		//Show active losks before dump
+		spin_lock_irqsave(&list_lock, irqflags);
+		print_active_locks(WAKE_LOCK_SUSPEND);
+		spin_unlock_irqrestore(&list_lock, irqflags);
+		kevent_trigger(KEVENT_DUMP_WAKELOCKS);
+		wake_lock_timeout(&watchdog_wake_lock, HZ*10); // wake lock 10 Sec for log master to dump main log.
+	}
+}
+static DEFINE_TIMER(watchdog_timer, watchdog_func, 0, 0);
+#endif  //CONFIG_WAKELOCK_WATCHDOG
+/* } Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long */
+/* Terry Cheng, 20111124, Port from 8250 platform. Add suspend watch dog to display call stack when some drivering do suspend call back too long {*/
+static struct task_struct *suspend_task = NULL;
+static void suspend_watchdog_func(unsigned long data)
+{
+	printk(KERN_ERR "Suspend watchdog timeout\n");
+	if (suspend_task) show_stack(suspend_task, NULL);
+}
+static DEFINE_TIMER(suspend_watchdog_timer, suspend_watchdog_func, 0, 0);
+/* Terry Cheng, 20111124, Port from 8250 platform. Add suspend watch dog to display call stack when some drivering do suspend call back too long {*/
 long has_wake_lock(int type)
 {
 	long ret;
@@ -352,10 +404,20 @@ static void suspend(struct work_struct *work)
 	suspend_sys_sync_queue();
 	if (debug_mask & DEBUG_SUSPEND)
 		pr_info("suspend: enter suspend\n");
+	/* 	Terry Cheng, 20111124, 
+		Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long 
+	    Add suspend watch dog to display call stack when some drivering do suspend call back too long {*/
+	suspend_task = current;
+	mod_timer(&suspend_watchdog_timer, jiffies + SUSPEND_WATCH_DOG_TIME);
+	del_timer(&watchdog_timer);
 	getnstimeofday(&ts_entry);
 	ret = pm_suspend(requested_suspend_state);
 	getnstimeofday(&ts_exit);
-
+	mod_timer(&watchdog_timer, jiffies + wakelock_watchdog_time );//Terry Cheng, 20130604, Remove hardcode and change to use module parameter to control 
+	del_timer(&suspend_watchdog_timer);
+	/* 	} Terry Cheng, 20111124, 
+		Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long 
+	    Add suspend watch dog to display call stack when some drivering do suspend call back too long */	
 	if (debug_mask & DEBUG_EXIT_SUSPEND) {
 		struct rtc_time tm;
 		rtc_time_to_tm(ts_exit.tv_sec, &tm);
@@ -429,8 +491,21 @@ void wake_lock_init(struct wake_lock *lock, int type, const char *name)
 {
 	unsigned long irqflags = 0;
 
-	if (name)
+	/* Terry Cheng, 20111124, Add to show PowerManagerService whether sucessfully do wake lock init {*/
+	if (name){
 		lock->name = name;
+		if (!strncmp(name, "PowerManagerService", 19)) {
+			service_wake_lock = lock;
+			printk(KERN_ERR "PowerManagerService get!!!\n");
+		} else if (!strncmp(name, "pm8921_usb_plugin", 17)){//Terry Cheng, 20121130, Fix detection error		
+			charger_wake_lock = lock;
+			printk(KERN_ERR "charger wake lock get!!!\n");
+		} else if (!strncmp(name, "msm_otg", 7)){	//Terry Cheng, 20121109, Change use msm_otg
+			usb_wake_lock = lock;
+			printk(KERN_ERR "usb wake lock get!!!\n");
+		}
+	}	
+	/* Terry Cheng, 20111124, Add to show PowerManagerService whether sucessfully do wake lock init {*/
 	BUG_ON(!lock->name);
 
 	if (debug_mask & DEBUG_WAKE_LOCK)
@@ -534,6 +609,14 @@ static void wake_lock_internal(
 		else if (!wake_lock_active(&main_wake_lock))
 			update_sleep_wait_stats_locked(0);
 #endif
+/* Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long {*/
+#ifdef CONFIG_WAKELOCK_WATCHDOG
+		//delete wake lock watch dog timer when acquire main_wake_lock
+		if (lock == &main_wake_lock) {
+			del_timer(&watchdog_timer);
+		}
+#endif
+/* }Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long */
 		if (has_timeout)
 			expire_in = has_wake_lock_locked(type);
 		else
@@ -602,6 +685,15 @@ void wake_unlock(struct wake_lock *lock)
 #ifdef CONFIG_WAKELOCK_STAT
 			update_sleep_wait_stats_locked(0);
 #endif
+/* Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long {*/
+#ifdef CONFIG_WAKELOCK_WATCHDOG
+			//Start wake lock watch dog timer when release main_wake_lock
+			if (has_lock) {
+				mod_timer(&watchdog_timer, jiffies + wakelock_watchdog_time); //Terry Cheng, 20130604, Remove hardcode and change to use module parameter to control 
+			}
+#endif  //CONFIG_WAKELOCK_WATCHDOG
+/* } Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long */
+
 		}
 	}
 	spin_unlock_irqrestore(&list_lock, irqflags);
@@ -613,6 +705,67 @@ int wake_lock_active(struct wake_lock *lock)
 	return !!(lock->flags & WAKE_LOCK_ACTIVE);
 }
 EXPORT_SYMBOL(wake_lock_active);
+/* Terry Cheng, 20121019, Get active suspend lock for Power manager to diagnose {*/
+ssize_t  get_active_suspend_locks( char *buf, int bufer_size)
+{
+	struct wake_lock *lock;
+	struct wake_lock *active_longest_lock=NULL;
+	unsigned long irqflags;
+	ktime_t now;
+	ktime_t active_time = ktime_set(0, 0);
+	ktime_t active_longest_time = ktime_set(0, 0);
+	ssize_t len = 0;
+
+	now = ktime_get();	
+	spin_lock_irqsave(&list_lock, irqflags);
+	list_for_each_entry(lock, &active_wake_locks[WAKE_LOCK_SUSPEND], link) {
+		//Terry Cheng, 20121228, auto expired wakelocks generally do not lock for 1 hour so only show timeout log 
+		if((lock->flags & WAKE_LOCK_AUTO_EXPIRE)) {
+			long timeout = lock->expires - jiffies;
+			if (timeout > 0 )
+				pr_info("%s %s: timeout = %ld\n", __FUNCTION__, lock->name, timeout);
+		} 
+		else {	
+			active_time = ktime_sub(now, lock->stat.last_time);
+		}
+		if(active_time.tv64 > active_longest_time.tv64){
+			active_longest_time = active_time;
+			active_longest_lock = lock;
+		}
+	}
+	spin_unlock_irqrestore(&list_lock, irqflags);	
+	//Only return lock longest wakelock name and it must lock for 1 hour
+	/* Terry Cheng, 20130604, Remove hardcode and change to use module parameter to control {*/
+	pr_err("active_longest_time %llu", ktime_to_ms(active_longest_time));
+	if(active_longest_lock && ((ktime_to_ms(active_longest_time)) >= (wakelock_watchdog_time/HZ*MSEC_PER_SEC)))
+	/* } Terry Cheng, 20130604, Remove hardcode and change to use module parameter to control */
+		len = snprintf(buf, bufer_size, "%s",  active_longest_lock->name);		
+	pr_info("%s lock for %lld ms len = %d\n", active_longest_lock->name, ktime_to_ms(active_longest_time), len);
+	return len;
+}
+EXPORT_SYMBOL(get_active_suspend_locks);
+/* } Terry Cheng, 20121019, Get active suspend lock for Power manager to diagnose */
+
+/* Terry Cheng, 20121122, Check charger or usb whether plugin {*/
+int  is_charger_usb_plugin()
+{
+	if(charger_wake_lock && usb_wake_lock)
+	{
+		//Terry Cheng, 20120102, charger_wake_lock is auto expire type. Its flag may not be updated. 
+		long timeout = charger_wake_lock->expires - jiffies; 
+		pr_info("charger timeout = %ld usb_wake_lock flag = 0x%x\n", timeout, usb_wake_lock->flags);
+		if (( timeout > 0) || wake_lock_active(usb_wake_lock))
+		{
+			printk("It's charger hold the wake lock. Don't worry!!\n");	
+			return 1;
+		}
+		else
+			return 0;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(is_charger_usb_plugin);
+/* } Terry Cheng, 20121122, Check charger or usb whether plugin */
 
 static int wakelock_stats_open(struct inode *inode, struct file *file)
 {
@@ -644,6 +797,11 @@ static int __init wakelocks_init(void)
 	wake_lock_init(&unknown_wakeup, WAKE_LOCK_SUSPEND, "unknown_wakeups");
 	wake_lock_init(&suspend_backoff_lock, WAKE_LOCK_SUSPEND,
 		       "suspend_backoff");
+/* Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long {*/
+#ifdef CONFIG_WAKELOCK_WATCHDOG
+	wake_lock_init(&watchdog_wake_lock, WAKE_LOCK_SUSPEND, WAKELOCK_WAKELOCK_NAME);
+#endif
+/* } Terry Cheng, 20111124, Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long */
 
 	ret = platform_device_register(&power_device);
 	if (ret) {

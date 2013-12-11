@@ -9,6 +9,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+
 #include <mach/msm_bus.h>
 #include <mach/msm_bus_board.h>
 #include "msm_sensor.h"
@@ -16,6 +17,231 @@
 #include "msm.h"
 #include "msm_ispif.h"
 #include "msm_camera_i2c_mux.h"
+#include <mach/hwid.h>
+
+//Eric Liu+
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+static struct pmlog_device *pmlog_device_cam_front = NULL;
+static struct pmlog_device *pmlog_device_cam_back = NULL;
+#endif //CONFIG_PM_LOG
+
+#define MSG2(format, arg...)  printk(KERN_INFO "[CAM]" format "\n", ## arg)
+static int cam_id_front = 0;
+static int cam_id_back  = 0;
+static unsigned long long cam_fuse_id_front = 0;
+
+//whenever the setting is the same, we can skip the real i2c config
+static int front_cam_auto_white_balance = -1;
+static int front_cam_white_balance_temperature = -1;
+static int front_cam_exposure = -1;
+static int front_cam_band_stop_filter = -1;
+static int front_cam_sharpness = -1; //sophia
+//Eric Liu-
+
+//Sophia Wang++, 20120815 for storing calibration data
+static uint8_t back_sensor_calied_awb_d65_rg = 0;
+static uint8_t back_sensor_calied_awb_d65_bg = 0;
+static uint8_t back_sensor_calied_awb_cwf_rg = 0;
+static uint8_t back_sensor_calied_awb_cwf_bg = 0;
+static uint8_t back_sensor_calied_awb_u30_rg = 0;
+static uint8_t back_sensor_calied_awb_u30_bg = 0;
+
+
+static uint8_t back_sensor_calied_af_ma_msb = 0;
+static uint8_t back_sensor_calied_af_ma_lsb = 0;
+static uint8_t back_sensor_calied_af_hori_msb = 0; //start dac
+static uint8_t back_sensor_calied_af_hori_lsb = 0;// start dac
+
+static uint8_t back_sensor_calied_production_data_year = 0; 
+static uint8_t back_sensor_calied_production_data_mouth = 0; 
+static uint8_t back_sensor_calied_production_data_date = 0; 
+static uint8_t back_sensor_calied_production_data_hour = 0;
+static uint8_t back_sensor_calied_production_data_minuite = 0;
+static uint8_t back_sensor_calied_production_data_second = 0; 
+
+//0x1--boston with blue glass
+//0x2--Dubai without blue glass
+static uint8_t back_sensor_calied_production_project_id= 0xff;
+//Sophia Wang++, 20120815 for storing calibration data
+
+//Sophia Wang++, 20120606 for auto camera test
+ int ov8825_af_done = 0xff;
+ int ov8825_af_result = 0xff;
+//Sophia Wang--, 20120606 for auto camera test
+
+
+int  initOpt= false; //add by sophia
+//#undef CDBG
+//#define CDBG pr_err
+
+/******************************************************************************
+ * add OTP information
+******************************************************************************/
+static ssize_t back_cam_otp_awb_d65_rg_read(struct device *dev, 
+					struct device_attribute *attr,
+					char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_awb_d65_rg);
+}
+static DEVICE_ATTR(back_otp_awb_d65_rg, 0444, back_cam_otp_awb_d65_rg_read, NULL);
+
+static ssize_t back_cam_otp_awb_d65_bg_read(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_awb_d65_bg);
+}
+static DEVICE_ATTR(back_otp_awb_d65_bg, 0444, back_cam_otp_awb_d65_bg_read, NULL);
+
+
+static ssize_t back_cam_otp_awb_cwf_rg_read(struct device *dev, 
+					struct device_attribute *attr,
+					char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_awb_cwf_rg);
+}
+static DEVICE_ATTR(back_otp_awb_cwf_rg, 0444, back_cam_otp_awb_cwf_rg_read, NULL);
+
+static ssize_t back_cam_otp_awb_cwf_bg_read(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_awb_cwf_bg);
+}
+static DEVICE_ATTR(back_otp_awb_cwf_bg, 0444, back_cam_otp_awb_cwf_bg_read, NULL);
+
+static ssize_t back_cam_otp_awb_u30_rg_read(struct device *dev, 
+					struct device_attribute *attr,
+					char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_awb_u30_rg);
+}
+static DEVICE_ATTR(back_otp_awb_u30_rg, 0444, back_cam_otp_awb_u30_rg_read, NULL);
+
+static ssize_t back_cam_otp_awb_u30_bg_read(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_awb_u30_bg);
+}
+static DEVICE_ATTR(back_otp_awb_u30_bg, 0444, back_cam_otp_awb_u30_bg_read, NULL);
+
+static ssize_t back_cam_otp_af_ma_msb_read(	struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_af_ma_msb);
+}
+static DEVICE_ATTR(back_otp_af_ma_msb, 0444, back_cam_otp_af_ma_msb_read, NULL);
+
+static ssize_t back_cam_otp_af_ma_lsb_read(	struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_af_ma_lsb);
+}
+static DEVICE_ATTR(back_otp_af_ma_lsb, 0444, back_cam_otp_af_ma_lsb_read, NULL);
+
+static ssize_t back_cam_otp_af_hori_msb_read(	struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_af_hori_msb);
+}
+static DEVICE_ATTR(back_otp_af_hori_msb, 0444, back_cam_otp_af_hori_msb_read, NULL);
+
+static ssize_t back_cam_otp_af_hori_lsb_read(	struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	return snprintf(buf, 10, "0x%x\n",back_sensor_calied_af_hori_lsb);
+}
+static DEVICE_ATTR(back_otp_af_hori_lsb, 0444, back_cam_otp_af_hori_lsb_read, NULL);
+
+
+static ssize_t back_cam_otp_project_id_read(	struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	return snprintf(buf, 10, "%d\n",back_sensor_calied_production_project_id);
+}
+static DEVICE_ATTR(back_sensor_otp_production_project_id, 0444, back_cam_otp_project_id_read, NULL);
+
+static ssize_t back_cam_otp_production_data_read(	struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	return snprintf(buf, 14, "%02d%02d%02d%02d%02d%02d\n",
+		back_sensor_calied_production_data_year,
+		back_sensor_calied_production_data_mouth,
+		back_sensor_calied_production_data_date,
+		back_sensor_calied_production_data_hour,
+		back_sensor_calied_production_data_minuite,
+		back_sensor_calied_production_data_second);
+
+#if 0
+	return snprintf(buf, 12, "%02d%02d%02d%02d%02d%02d\n",
+		back_sensor_calied_production_data_year,
+		back_sensor_calied_production_data_mouth,
+		back_sensor_calied_production_data_date,
+		back_sensor_calied_production_data_hour,
+		back_sensor_calied_production_data_minuite,
+		back_sensor_calied_production_data_second);
+#endif
+}
+static DEVICE_ATTR(back_otp_production_data, 0444, back_cam_otp_production_data_read, NULL);
+
+static int cam_create_sys_entries(struct i2c_client *client)
+{
+	int ret=0;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_awb_d65_rg);
+	WARN_ON(ret);
+	if (ret)  return ret;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_awb_d65_bg);
+	WARN_ON(ret);
+	if (ret)  return ret;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_awb_cwf_rg);
+	WARN_ON(ret);
+	if (ret)  return ret;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_awb_cwf_bg);
+	WARN_ON(ret);
+	if (ret)  return ret;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_awb_u30_rg);
+	WARN_ON(ret);
+	if (ret)  return ret;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_awb_u30_bg);
+	WARN_ON(ret);
+	if (ret)  return ret;
+	
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_af_ma_msb);
+	WARN_ON(ret);
+	if (ret)  return ret;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_af_ma_lsb);
+	WARN_ON(ret);
+	if (ret)  return ret;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_af_hori_msb);
+	WARN_ON(ret);
+	if (ret)  return ret;
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_af_hori_lsb);
+	WARN_ON(ret);
+
+	ret = device_create_file(&client->dev,&dev_attr_back_otp_production_data);
+	WARN_ON(ret);
+
+	ret = device_create_file(&client->dev,&dev_attr_back_sensor_otp_production_project_id);
+	WARN_ON(ret);	
+	return ret;
+}
 
 /*=============================================================*/
 void msm_sensor_adjust_frame_lines1(struct msm_sensor_ctrl_t *s_ctrl)
@@ -91,7 +317,7 @@ static void msm_sensor_delay_frames(struct msm_sensor_ctrl_t *s_ctrl)
 		else
 			delay = (1000 * s_ctrl->wait_num_frames) / fps / Q10;
 	}
-	CDBG("%s fps = %ld, delay = %d, min_delay %d\n", __func__, fps,
+	pr_err("%s fps = %ld, delay = %d, min_delay %d\n", __func__, fps,
 		delay, s_ctrl->min_delay);
 	if (delay > s_ctrl->min_delay)
 		msleep(delay);
@@ -164,7 +390,11 @@ void msm_sensor_start_stream(struct msm_sensor_ctrl_t *s_ctrl)
 		s_ctrl->msm_sensor_reg->start_stream_conf,
 		s_ctrl->msm_sensor_reg->start_stream_conf_size,
 		s_ctrl->msm_sensor_reg->default_data_type);
-	msleep(20);
+
+	//Sophia Wang++
+	//msleep(20);
+	msm_sensor_delay_frames(s_ctrl);
+	//Sophia Wang--
 }
 
 void msm_sensor_stop_stream(struct msm_sensor_ctrl_t *s_ctrl)
@@ -558,6 +788,24 @@ int32_t msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			else
 				rc = -EFAULT;
 			break;
+
+		//Sophia Wang++
+		case CFG_GET_CALIB_DATA:
+			if (s_ctrl->func_tbl->sensor_get_calib_params == NULL) {
+				rc = -EFAULT;
+				break;
+			}
+
+			rc = s_ctrl->func_tbl->sensor_get_calib_params(
+				s_ctrl,
+				&cdata.cfg.otp_params);
+
+			if (copy_to_user((void *)argp,
+				&cdata,
+				sizeof(struct sensor_cfg_data)))
+				rc = -EFAULT;
+			break;
+		//Sophia Wang--
 
 		default:
 			rc = -EFAULT;
@@ -1447,6 +1695,14 @@ int32_t msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 	int32_t rc = 0;
 	struct msm_camera_sensor_info *data = s_ctrl->sensordata;
 	struct device *dev = NULL;
+
+	//Eric Liu+
+	if(s_ctrl->sensordata->camera_type == FRONT_CAMERA_2D)
+		MSG2("%s: FRONT_CAMERA",__func__);
+	else
+		MSG2("%s: BACK_CAMERA",__func__);
+	//Eric Liu-
+
 	if (s_ctrl->sensor_device_type == MSM_SENSOR_PLATFORM_DEVICE)
 		dev = &s_ctrl->pdev->dev;
 	else
@@ -1536,6 +1792,34 @@ int32_t msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 		}
 	}
 	s_ctrl->curr_res = MSM_SENSOR_INVALID_RES;
+
+  //Eric Liu+, for skip the real i2c config
+  if(s_ctrl->sensordata->camera_type == FRONT_CAMERA_2D)
+  {
+    front_cam_auto_white_balance = -1;
+    front_cam_white_balance_temperature = -1;
+    front_cam_exposure = -1;
+    front_cam_band_stop_filter = -1;
+  }
+  #ifdef CONFIG_PM_LOG
+  {
+    int rc, type = s_ctrl->sensordata->camera_type;
+    if(type == FRONT_CAMERA_2D && pmlog_device_cam_front != NULL)
+    {
+      rc = pmlog_device_on(pmlog_device_cam_front);
+      if(rc)  MSG2("[PM_LOG]FRONT_CAMERA On, fail = %d",rc);
+      //else    MSG2("[PM_LOG]FRONT_CAMERA On");
+    }
+    else if(type == BACK_CAMERA_2D && pmlog_device_cam_back != NULL)
+    {
+      rc = pmlog_device_on(pmlog_device_cam_back);
+      if(rc)  MSG2("[PM_LOG]BACK_CAMERA On, fail = %d",rc);
+      //else    MSG2("[PM_LOG]BACK_CAMERA On");
+    }
+  }
+  #endif //CONFIG_PM_LOG
+  //Eric Liu-
+
 	return rc;
 
 cci_init_failed:
@@ -1571,6 +1855,24 @@ int32_t msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 {
 	struct msm_camera_sensor_info *data = s_ctrl->sensordata;
 	struct device *dev = NULL;
+
+	//Eric Liu+
+	if(s_ctrl->sensordata->camera_type == FRONT_CAMERA_2D)
+		MSG2("%s: FRONT_CAMERA",__func__);
+	else
+		MSG2("%s: BACK_CAMERA",__func__);
+	//Eric Liu-
+
+	// sophia.wang++ 20130528
+	pr_err("sensor_state:%d", s_ctrl->sensor_state);
+	// if the sensor state already power down, we should return back
+	if(s_ctrl->sensor_state == MSM_SENSOR_POWER_DOWN)
+	{
+		pr_err("this sensor has been closed\n");
+			return 0;
+	}
+	// sophia wang--
+
 	if (s_ctrl->sensor_device_type == MSM_SENSOR_PLATFORM_DEVICE)
 		dev = &s_ctrl->pdev->dev;
 	else
@@ -1609,6 +1911,34 @@ int32_t msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 	msm_camera_request_gpio_table(data, 0);
 	kfree(s_ctrl->reg_ptr);
 	s_ctrl->curr_res = MSM_SENSOR_INVALID_RES;
+
+  //Eric Liu+, for skip the real i2c config
+  if(s_ctrl->sensordata->camera_type == FRONT_CAMERA_2D)
+  {
+    front_cam_auto_white_balance = -1;
+    front_cam_white_balance_temperature = -1;
+    front_cam_exposure = -1;
+    front_cam_band_stop_filter = -1;
+  }
+  #ifdef CONFIG_PM_LOG
+  {
+    int rc, type = s_ctrl->sensordata->camera_type;
+    if(type == FRONT_CAMERA_2D && pmlog_device_cam_front != NULL)
+    {
+      rc = pmlog_device_off(pmlog_device_cam_front);
+      if(rc)  MSG2("[PM_LOG]FRONT_CAMERA Off, fail = %d",rc);
+      //else    MSG2("[PM_LOG]FRONT_CAMERA Off");
+    }
+    else if(type == BACK_CAMERA_2D && pmlog_device_cam_back != NULL)
+    {
+      rc = pmlog_device_off(pmlog_device_cam_back);
+      if(rc)  MSG2("[PM_LOG]BACK_CAMERA Off, fail = %d",rc);
+      //else    MSG2("[PM_LOG]BACK_CAMERA Off");
+    }
+  }
+  #endif //CONFIG_PM_LOG
+  //Eric Liu-
+
 	return 0;
 }
 
@@ -1626,12 +1956,68 @@ int32_t msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 		return rc;
 	}
 
-	CDBG("%s: read id: %x expected id %x:\n", __func__, chipid,
+	pr_err("%s: read id: %x expected id %x:\n", __func__, chipid,
 		s_ctrl->sensor_id_info->sensor_id);
 	if (chipid != s_ctrl->sensor_id_info->sensor_id) {
 		pr_err("msm_sensor_match_id chip id doesnot match\n");
 		return -ENODEV;
 	}
+
+	// sophia wang++ for ftd 
+	{
+		int type = s_ctrl->sensordata->camera_type;
+		if(type == FRONT_CAMERA_2D)
+		{
+			MSG2("%s, Front = %04X (%s)",__func__,
+				chipid,s_ctrl->sensordata->sensor_name);
+			cam_id_front = chipid;
+			//mt9m114, read Fuse Id
+			if(s_ctrl->sensor_id_info->sensor_id == 0x2481)
+			{
+				int32_t rc1 = 0, rc2 = 0, rc3 = 0, rc4 = 0;
+				uint16_t id1 = 0, id2 = 0, id3 = 0, id4 = 0;
+				rc1 = msm_camera_i2c_read(s_ctrl->sensor_i2c_client, 0x31F4, &id1, MSM_CAMERA_I2C_WORD_DATA); //fuse_id1
+				rc2 = msm_camera_i2c_read(s_ctrl->sensor_i2c_client, 0x31F6, &id2, MSM_CAMERA_I2C_WORD_DATA); //fuse_id2
+				rc3 = msm_camera_i2c_read(s_ctrl->sensor_i2c_client, 0x31F8, &id3, MSM_CAMERA_I2C_WORD_DATA); //fuse_id3
+				rc4 = msm_camera_i2c_read(s_ctrl->sensor_i2c_client, 0x31FA, &id4, MSM_CAMERA_I2C_WORD_DATA); //fuse_id4
+				if(rc1 < 0 || rc2 < 0 || rc3 < 0 || rc4 < 0)
+				{
+					MSG2("%s, Front Fuse Id read Fail!",__func__);
+				}
+				else
+				{
+					//format = fuse_id4, fuse_id3, fuse_id2, fuse_id1
+					cam_fuse_id_front = id4;
+					cam_fuse_id_front = (cam_fuse_id_front << 16) + id3;
+					cam_fuse_id_front = (cam_fuse_id_front << 16) + id2;
+					cam_fuse_id_front = (cam_fuse_id_front << 16) + id1;
+					MSG2("%s, Front Fuse Id = 0x%016llX",__func__,cam_fuse_id_front);
+				}
+			}
+			else if(s_ctrl->sensor_id_info->sensor_id == 0x2656) // ov2675
+			{
+
+				if(s_ctrl->func_tbl->sensor_get_fuse_id != NULL)
+				{
+					cam_fuse_id_front = s_ctrl->func_tbl->sensor_get_fuse_id(s_ctrl); 
+
+				}
+
+			}
+
+		} else if(type == BACK_CAMERA_2D)
+		{
+			MSG2("%s, Back  = %04X (%s)",__func__,
+				chipid,s_ctrl->sensordata->sensor_name);
+			cam_id_back = chipid;
+		}
+		else
+		{
+			MSG2("%s, Cam Id = %04X (type = %d)",__func__,chipid,type);
+		}
+	}
+	// sophia wang -- for ftd
+	
 	return rc;
 }
 
@@ -1662,6 +2048,79 @@ int32_t msm_sensor_i2c_probe(struct i2c_client *client,
 		return rc;
 	}
 
+  //Eric Liu+
+  //base on project and board id, bypass non-usable camera, 20130628
+  //Boston EVB0 ~ PVT0:               use ov8825
+  //Boston CASPER_EVT1 ~ CASPER_DVT0: use imx091
+  MSG2("%s, msm_project_id=%d, system_rev=0x%X",__func__,msm_project_id,system_rev);
+  if(msm_project_id  == BOSTON && system_rev >= CASPER_EVT1)
+  {
+    if(s_ctrl->sensor_id_info->sensor_id == 0x8825)
+    {
+      MSG2("%s, bypass OV8825",__func__);
+      return -ENODEV;
+    }
+  }
+  else
+  if(msm_project_id == BOSTON && system_rev < CASPER_EVT1)
+  {
+    if(s_ctrl->sensor_id_info->sensor_id == 0x0091)
+    {
+      MSG2("%s, bypass IMX091",__func__);
+      return -ENODEV;
+    }
+  }
+  else // sophia, 20130711, 
+  {
+   if(s_ctrl->sensor_id_info->sensor_id == 0x0091)
+    {
+      MSG2("%s, bypass IMX091",__func__);
+      return -ENODEV;
+    }
+
+
+  }
+
+  //if a back cam already probed success, bypass another back cam probe
+  if(msm_project_id >= BOSTON &&
+    (s_ctrl->sensor_id_info->sensor_id == 0x8825 || s_ctrl->sensor_id_info->sensor_id == 0x0091) &&
+    (pmlog_device_cam_back != NULL) )
+  {
+    MSG2("%s, pmlog_device_cam_back=%08X, bypass %04X",__func__,
+      (int)pmlog_device_cam_back,s_ctrl->sensor_id_info->sensor_id);
+    return -ENODEV;
+  }
+
+  //base on board id, pick correct vreg_seq, 20130628
+  //Boston EVB0 ~ EVT0:               use vreg evt0
+  //Boston EVT1 ~ EVT1_2:             use vreg evt1
+  //Boston EVT1_3 ~ PVT0:             use vreg evt
+  //Boston CASPER_EVT1 ~ CASPER_DVT0: use vreg evt1
+  if(msm_project_id == BOSTON && system_rev <= EVT0)  //use vreg_seq_evt0
+  {
+    if(s_ctrl->vreg_seq_evt0 && s_ctrl->num_vreg_seq_evt0)
+    {
+      s_ctrl->vreg_seq      = s_ctrl->vreg_seq_evt0;
+      s_ctrl->num_vreg_seq  = s_ctrl->num_vreg_seq_evt0;
+      MSG2("%s, sensor_id=%04X, use vreg_seq_evt0",__func__,s_ctrl->sensor_id_info->sensor_id);
+    }
+  }
+  else if(msm_project_id == BOSTON && //use vreg_seq_evt1
+    (system_rev <= EVT1_2 || system_rev >= CASPER_EVT1))
+  {
+    if(s_ctrl->vreg_seq_evt1 && s_ctrl->num_vreg_seq_evt1)
+    {
+      s_ctrl->vreg_seq      = s_ctrl->vreg_seq_evt1;
+      s_ctrl->num_vreg_seq  = s_ctrl->num_vreg_seq_evt1;
+      MSG2("%s, sensor_id=%04X, use vreg_seq_evt1",__func__,s_ctrl->sensor_id_info->sensor_id);
+    }
+  }
+  else  //use vreg_seq_evt
+  {
+    MSG2("%s, id %04X, use vreg_seq",__func__,s_ctrl->sensor_id_info->sensor_id);
+  }
+  //Eric Liu-
+
 	s_ctrl->sensordata = client->dev.platform_data;
 	if (s_ctrl->sensordata == NULL) {
 		pr_err("%s %s NULL sensor data\n", __func__, client->name);
@@ -1681,6 +2140,64 @@ int32_t msm_sensor_i2c_probe(struct i2c_client *client,
 	if (rc < 0)
 		goto probe_fail;
 
+  // sophia wang++, 20121127, read OTP releated data
+  if(s_ctrl->sensor_id_info->sensor_id == 0x8825 &&
+    s_ctrl->func_tbl->sensor_read_otp_mid != NULL &&
+    initOpt == false)
+	{
+#if 0
+    uint8_t *awb_calib_data  = (uint8_t *)(s_ctrl->otp_info->data_tbl[0].data);
+    uint8_t *af_calib_data  = (uint8_t *)(s_ctrl->otp_info->data_tbl[1].data);
+#endif	       
+		uint8_t mid_id;
+		
+    s_ctrl->func_tbl->sensor_stop_stream(s_ctrl);
+
+    mid_id = s_ctrl->func_tbl->sensor_read_otp_mid(s_ctrl);
+#if 1    
+    back_sensor_calied_awb_d65_rg = s_ctrl->otp_info->rg_ratio_d65;
+    back_sensor_calied_awb_d65_bg = s_ctrl->otp_info->bg_ratio_d65;
+    back_sensor_calied_awb_cwf_rg = s_ctrl->otp_info->rg_ratio_cwf;
+    back_sensor_calied_awb_cwf_bg = s_ctrl->otp_info->bg_ratio_cwf;
+    back_sensor_calied_awb_u30_rg = s_ctrl->otp_info->rg_ratio_u30;
+    back_sensor_calied_awb_u30_bg = s_ctrl->otp_info->bg_ratio_u30;
+
+    back_sensor_calied_af_hori_msb = s_ctrl->otp_info->ov8825_af_otp[0];
+    back_sensor_calied_af_hori_lsb = s_ctrl->otp_info->ov8825_af_otp[1];
+    back_sensor_calied_af_ma_msb =s_ctrl->otp_info->ov8825_af_otp[2];
+    back_sensor_calied_af_ma_lsb = s_ctrl->otp_info->ov8825_af_otp[3];
+
+    back_sensor_calied_production_data_year = s_ctrl->otp_info->year;
+    back_sensor_calied_production_data_mouth = s_ctrl->otp_info->mouth;
+    back_sensor_calied_production_data_date = s_ctrl->otp_info->date;
+    back_sensor_calied_production_data_hour = s_ctrl->otp_info->hour;
+    back_sensor_calied_production_data_minuite = s_ctrl->otp_info->minuite;
+    back_sensor_calied_production_data_second = s_ctrl->otp_info->second;
+
+    back_sensor_calied_production_project_id = (s_ctrl->otp_info->lens_id >>6)&0x3;
+#endif
+
+    // sophia wang++, 20120727, if there is two module for the same sensor, we need to check mid id       
+    if(mid_id != 0x2)
+    {
+      pr_err("%s, proble failed! mid id is not matched  mid_id:0x%x, \n", __func__,
+        mid_id);
+      goto probe_fail;
+    }
+    // sophia wang -- 20120727       
+
+    initOpt = true;
+ 	}
+  // sophia wang++, 20121127, read OTP releated data
+
+  //Eric Liu+, for IMX091
+  if(s_ctrl->sensor_id_info->sensor_id == 0x0091 &&
+    s_ctrl->func_tbl->sensor_read_otp_mid != NULL)
+  {
+    s_ctrl->func_tbl->sensor_read_otp_mid(s_ctrl);
+  }
+  //Eric Liu-
+	
 	if (!s_ctrl->wait_num_frames)
 		s_ctrl->wait_num_frames = 1 * Q10;
 
@@ -1698,6 +2215,18 @@ int32_t msm_sensor_i2c_probe(struct i2c_client *client,
 	msm_sensor_register(&s_ctrl->sensor_v4l2_subdev);
 	s_ctrl->sensor_v4l2_subdev.entity.revision =
 		s_ctrl->sensor_v4l2_subdev.devnode->num;
+
+
+	msm_sensor_enable_debugfs(s_ctrl);
+	
+	// sophia wang++
+	if(s_ctrl->sensor_id_info->sensor_id == 0x8825)
+	{
+		rc=cam_create_sys_entries(client);
+		if (rc<0) goto probe_fail;
+	}
+	// sophia wang--
+	
 	goto power_down;
 probe_fail:
 	pr_err("%s %s_i2c_probe failed\n", __func__, client->name);
@@ -1706,6 +2235,26 @@ power_down:
 		rc = 0;
 	s_ctrl->func_tbl->sensor_power_down(s_ctrl);
 	s_ctrl->sensor_state = MSM_SENSOR_POWER_DOWN;
+
+  //Eric Liu+
+  #ifdef CONFIG_PM_LOG
+  if(!rc)
+  {
+    int type = s_ctrl->sensordata->camera_type;
+    if(type == FRONT_CAMERA_2D && pmlog_device_cam_front == NULL)
+    {
+      pmlog_device_cam_front = pmlog_register_device(&client->dev);
+      MSG2("[PM_LOG]FRONT_CAMERA, device = %08X",(int)pmlog_device_cam_front);
+    }
+    else if(type == BACK_CAMERA_2D && pmlog_device_cam_back == NULL)
+    {
+      pmlog_device_cam_back = pmlog_register_device(&client->dev);
+      MSG2("[PM_LOG]BACK_CAMERA, device= %08X",(int)pmlog_device_cam_back);
+    }
+  }
+  #endif //CONFIG_PM_LOG
+  //Eric Liu-
+
 	return rc;
 }
 
@@ -1855,7 +2404,65 @@ int32_t msm_sensor_v4l2_s_ctrl(struct v4l2_subdev *sd,
 	CDBG("%d\n", ctrl->id);
 	if (v4l2_ctrl == NULL)
 		return rc;
+
+  //Eric Liu+, for skip the real i2c config
+  switch(ctrl->id)
+  {
+    case V4L2_CID_AUTO_WHITE_BALANCE:
+      if(front_cam_auto_white_balance == ctrl->value)
+        return 0;
+      MSG2("%s, WHITE_BALANCE = %s",__func__,
+        ctrl->value == 0 ? "OFF" :
+        ctrl->value == 1 ? "AUTO" : "???");
+      front_cam_auto_white_balance = ctrl->value;
+      front_cam_white_balance_temperature = -1;
+      break;
+    case V4L2_CID_WHITE_BALANCE_TEMPERATURE:
+      if(front_cam_white_balance_temperature == ctrl->value)
+        return 0;
+      MSG2("%s, WHITE_BALANCE = %s",__func__,
+        ctrl->value == 3 ? "INCANDESCENT" :
+        ctrl->value == 4 ? "FLUORESCENT" :
+        ctrl->value == 5 ? "DAYLIGHT" :
+        ctrl->value == 6 ? "CLOUDY_DAYLIGHT" : "???");
+      front_cam_white_balance_temperature = ctrl->value;
+      front_cam_auto_white_balance = -1;
+      break;
+    case V4L2_CID_EXPOSURE:
+      if(front_cam_exposure == ctrl->value)
+        return 0;
+      MSG2("%s, EXPOSURE      = %s",__func__,
+        ctrl->value == 0 ? "-2" :
+        ctrl->value == 1 ? "-1" :
+        ctrl->value == 2 ? " 0" :
+        ctrl->value == 3 ? " 1" :
+        ctrl->value == 4 ? " 2" : "???");
+      front_cam_exposure = ctrl->value;
+      break;
+   // case V4L2_CID_BAND_STOP_FILTER:
+    case V4L2_CID_POWER_LINE_FREQUENCY:
+      if(front_cam_band_stop_filter == ctrl->value)
+        return 0;
+      MSG2("%s, BAND_STOP     = %s",__func__,
+        ctrl->value == 1 ? "60Hz" :
+        ctrl->value == 2 ? "50Hz" : "???");
+      front_cam_band_stop_filter = ctrl->value;
+      break;
+
+      case V4L2_CID_SHARPNESS:
+      	if (front_cam_sharpness == ctrl->value)
+      		return 0;
+      MSG2("%s, sharpness     = %d",__func__, ctrl->value);
+      front_cam_sharpness = ctrl->value;
+      break;
+      
+    default:
+      MSG2("%s, id=%08X, = %X",__func__,ctrl->id,ctrl->value);
+      break;
+  }
+  //Eric Liu-
 	for (i = 0; i < s_ctrl->num_v4l2_ctrl; i++) {
+		CDBG("%s, ctrl->id = 0x%x,  v4l2_ctrl[i].ctrl_id = 0x%x\n", __func__, ctrl->id, v4l2_ctrl[i].ctrl_id);
 		if (v4l2_ctrl[i].ctrl_id == ctrl->id) {
 			if (v4l2_ctrl[i].s_v4l2_ctrl != NULL) {
 				CDBG("\n calling msm_sensor_s_ctrl_by_enum\n");
@@ -1875,8 +2482,11 @@ int32_t msm_sensor_v4l2_query_ctrl(
 	struct v4l2_subdev *sd, struct v4l2_queryctrl *qctrl)
 {
 	int rc = -1, i = 0;
-	struct msm_sensor_ctrl_t *s_ctrl =
-		(struct msm_sensor_ctrl_t *) sd->dev_priv;
+	//Eric Liu+, Get correct sensor control
+	//struct msm_sensor_ctrl_t *s_ctrl =
+	//	(struct msm_sensor_ctrl_t *) sd->dev_priv;
+	struct msm_sensor_ctrl_t *s_ctrl = get_sctrl(sd);
+	//Eric Liu-
 
 	CDBG("%s\n", __func__);
 	CDBG("%s id: %d\n", __func__, qctrl->id);
@@ -1910,13 +2520,94 @@ int msm_sensor_s_ctrl_by_enum(struct msm_sensor_ctrl_t *s_ctrl,
 	return rc;
 }
 
+
+static int msm_sensor_debugfs_read_otp(void *data, u64 val)
+{
+	struct msm_sensor_ctrl_t *s_ctrl = (struct msm_sensor_ctrl_t *) data;
+	
+
+		if( (s_ctrl->func_tbl->sensor_get_fuse_id != NULL) && (s_ctrl->sensordata->camera_type == FRONT_CAMERA_2D))
+		{
+
+			s_ctrl->func_tbl->sensor_power_up(s_ctrl);
+	       	s_ctrl->sensor_state = MSM_SENSOR_POWER_UP;
+	   	       
+		        cam_fuse_id_front = s_ctrl->func_tbl->sensor_get_fuse_id(s_ctrl); 
+
+			s_ctrl->func_tbl->sensor_power_down(s_ctrl);
+	       	s_ctrl->sensor_state = MSM_SENSOR_POWER_DOWN;
+		        		
+		}
+
+
+	return 0;
+}
+
+
+DEFINE_SIMPLE_ATTRIBUTE(sensor_debugfs_read_otp, NULL,
+			msm_sensor_debugfs_read_otp, "%llu\n");
+
+static int msm_sensor_debugfs_write_otp(void *data, u64 val)
+{
+	struct msm_sensor_ctrl_t *s_ctrl = (struct msm_sensor_ctrl_t *) data;
+	
+	if (s_ctrl->func_tbl->sensor_writ_otp != NULL)
+	{
+		s_ctrl->func_tbl->sensor_writ_otp(s_ctrl, val);
+
+
+#if 0
+		if( (s_ctrl->func_tbl->sensor_get_fuse_id != NULL) && (s_ctrl->sensordata->camera_type == FRONT_CAMERA_2D))
+		{
+		        cam_fuse_id_front = s_ctrl->func_tbl->sensor_get_fuse_id(s_ctrl); 
+		
+		}
+#endif
+		
+	}
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(sensor_debugfs_write_otp, NULL,
+			msm_sensor_debugfs_write_otp, "%llu\n");
+
+
+static int msm_sensor_debugfs_power_s(void *data, u64 val)
+{
+	struct msm_sensor_ctrl_t *s_ctrl = (struct msm_sensor_ctrl_t *) data;
+	if (val)
+	{
+		s_ctrl->func_tbl->sensor_power_up(s_ctrl);
+	       s_ctrl->sensor_state = MSM_SENSOR_POWER_UP;
+	       pr_err("%s, s_ctrl->sensor_state:%d\n", __func__, s_ctrl->sensor_state);
+	}
+	else
+	{
+		s_ctrl->func_tbl->sensor_power_down(s_ctrl);
+	       s_ctrl->sensor_state = MSM_SENSOR_POWER_DOWN;
+	}
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(sensor_debugfs_power, NULL,
+			msm_sensor_debugfs_power_s, "%llu\n");
+
+
 static int msm_sensor_debugfs_stream_s(void *data, u64 val)
 {
 	struct msm_sensor_ctrl_t *s_ctrl = (struct msm_sensor_ctrl_t *) data;
 	if (val)
+	{
 		s_ctrl->func_tbl->sensor_start_stream(s_ctrl);
+
+	}
 	else
+	{
 		s_ctrl->func_tbl->sensor_stop_stream(s_ctrl);
+
+
+	}
 	return 0;
 }
 
@@ -1934,14 +2625,32 @@ DEFINE_SIMPLE_ATTRIBUTE(sensor_debugfs_test, NULL,
 
 int msm_sensor_enable_debugfs(struct msm_sensor_ctrl_t *s_ctrl)
 {
-	struct dentry *debugfs_base, *sensor_dir;
-	debugfs_base = debugfs_create_dir("msm_sensor", NULL);
-	if (!debugfs_base)
-		return -ENOMEM;
+	static struct dentry *debugfs_base = NULL; 
+	struct dentry *sensor_dir;
 
+       if(debugfs_base == NULL)
+       {
+		debugfs_base = debugfs_create_dir("msm_sensor", NULL);
+		if (!debugfs_base)
+			return -ENOMEM;
+       }
+
+       
 	sensor_dir = debugfs_create_dir
 		(s_ctrl->sensordata->sensor_name, debugfs_base);
 	if (!sensor_dir)
+		return -ENOMEM;
+
+	if (!debugfs_create_file("read_otp", S_IRUGO | S_IWUSR, sensor_dir,
+			(void *) s_ctrl, &sensor_debugfs_read_otp))
+		return -ENOMEM; 
+
+	if (!debugfs_create_file("write_otp", S_IRUGO | S_IWUSR, sensor_dir,
+			(void *) s_ctrl, &sensor_debugfs_write_otp))
+		return -ENOMEM;      
+
+	if (!debugfs_create_file("power", S_IRUGO | S_IWUSR, sensor_dir,
+			(void *) s_ctrl, &sensor_debugfs_power))
 		return -ENOMEM;
 
 	if (!debugfs_create_file("stream", S_IRUGO | S_IWUSR, sensor_dir,
@@ -1954,3 +2663,112 @@ int msm_sensor_enable_debugfs(struct msm_sensor_ctrl_t *s_ctrl)
 
 	return 0;
 }
+
+//Eric Liu+, for ftd read cam id
+static int msm_sensor_ftd_s(void *data, u64 *val)
+{
+  int type = (int)data;
+  switch(type)
+  {
+    case BACK_CAMERA_2D:
+      *val = cam_id_back;
+      break;
+    case FRONT_CAMERA_2D:
+      *val = cam_id_front;
+      break;
+    case (FRONT_CAMERA_2D + 10):
+      *val = cam_fuse_id_front;
+      break;
+    default:
+      MSG2("%s, invalid type = %d",__func__,type);
+      *val = 0;
+      break;
+  }
+	return 0;
+}
+
+static int ov8825_ftd_read_af_info(void *data, u64 *val)
+{
+  int type = (int)data;
+  switch(type)
+  {
+    // check whether af is done
+    case 0:
+      *val = ov8825_af_done;
+      break;
+
+
+     // check af result 
+    case 1:
+      *val = ov8825_af_result;
+      break;
+
+
+    default:
+      MSG2("%s, invalid type = %d",__func__,type);
+      *val = 0xff;
+      break;
+  }
+       CDBG("%s: type:%d, value:%d\n", __func__, type, (int)(*val));
+	return 0;
+}
+
+int ov8825_ftd_write_af_s(void *parm, u64 mode)
+{
+
+   int type = (int)parm;
+
+    switch(type)
+    {
+       case 0:
+	ov8825_af_done = mode;
+       break;
+
+       case 1:
+	ov8825_af_result = mode;
+	break;
+
+   }
+       CDBG("%s: type:%d, mode:%d\n", __func__, type, (int)mode);
+	return 0;
+}    
+
+
+DEFINE_SIMPLE_ATTRIBUTE(msm_sensor_ftd, msm_sensor_ftd_s, NULL, "%llu\n");
+
+//Sophia Wang++, 20120606 for auto camera test
+DEFINE_SIMPLE_ATTRIBUTE(ov8825_ftd_read, ov8825_ftd_read_af_info, NULL, "%lld\n"); // ov8820 read af ino function
+DEFINE_SIMPLE_ATTRIBUTE(ov8825_ftd_write_af, NULL, ov8825_ftd_write_af_s, "%llu\n"); // ov8820 read af ino function
+//DEFINE_SIMPLE_ATTRIBUTE(ov8820_ftd_write_af_result, NULL, ov8820_ftd_write_af_s, "%llu\n");
+//Sophia Wang--, 20120606 for auto camera test
+
+static int __init msm_sensor_ftd_init(void)
+{
+  struct dentry *debugfs_base;
+  debugfs_base = debugfs_create_dir("msm_sensor_ftd", 0);
+  MSG2("%s+",__func__);
+  if (IS_ERR(debugfs_base))
+    return -ENOMEM;
+  debugfs_create_file("cam_id_front", 0444, debugfs_base, (void *)FRONT_CAMERA_2D, &msm_sensor_ftd);
+  debugfs_create_file("cam_id_back",  0444, debugfs_base, (void *)BACK_CAMERA_2D, &msm_sensor_ftd);
+  debugfs_create_file("cam_fuse_id_front",  0444, debugfs_base, (void *)FRONT_CAMERA_2D + 10, &msm_sensor_ftd);
+
+  debugfs_base = debugfs_create_dir("cam_back_ftd", 0);
+  if (IS_ERR(debugfs_base))
+  {
+    MSG2("%s, create ov8820 node failed!\n", __func__);
+    return -ENOMEM;
+  }
+  debugfs_create_file("read_af_done", 0777, debugfs_base, (void*)0, &ov8825_ftd_read);
+  debugfs_create_file("read_af_result", 0777, debugfs_base, (void*)1, &ov8825_ftd_read);
+  debugfs_create_file("write_af_done", 0777, debugfs_base, (void*)0, &ov8825_ftd_write_af);
+  debugfs_create_file("write_af_result", 0777, debugfs_base, (void *)1, &ov8825_ftd_write_af);
+
+  
+  MSG2("%s-",__func__);
+
+	return 0;
+}
+
+module_init(msm_sensor_ftd_init);
+//Sophia Wang--, 20120606 for auto camera test

@@ -80,6 +80,10 @@
 #define MSM_UART8DM_PHYS	(MSM_GSBI8_PHYS + 0x40000)
 #define MSM_UART9DM_PHYS	(MSM_GSBI9_PHYS + 0x40000)
 
+/* Terry Cheng, 20121210, Add GSB7 for SIM over UART config { */
+#define MSM_UART7DM_PHYS	(MSM_GSBI7_PHYS + 0x40000)
+/* } Terry Cheng, 20121210, Add GSB7 for SIM over UART config  */
+
 /* GSBI QUP devices */
 #define MSM_GSBI1_QUP_PHYS	(MSM_GSBI1_PHYS + 0x80000)
 #define MSM_GSBI2_QUP_PHYS	(MSM_GSBI2_PHYS + 0x80000)
@@ -436,6 +440,35 @@ struct platform_device msm8960_device_uart_gsbi5 = {
 	.num_resources	= ARRAY_SIZE(resources_uart_gsbi5),
 	.resource	= resources_uart_gsbi5,
 };
+/* Terry Cheng, 20121210, Add GSB7 for SIM over UART config { */
+static struct resource resources_uart_gsbi7[] = {
+	{
+		.start	= GSBI7_UARTDM_IRQ,
+		.end	= GSBI7_UARTDM_IRQ,
+		.flags	= IORESOURCE_IRQ,
+	},
+	{
+		.start	= MSM_UART7DM_PHYS,
+		.end	= MSM_UART7DM_PHYS + PAGE_SIZE - 1,
+		.name	= "uartdm_resource",
+		.flags	= IORESOURCE_MEM,
+	},
+	{
+		.start	= MSM_GSBI7_PHYS,
+		.end	= MSM_GSBI7_PHYS + PAGE_SIZE - 1,
+		.name	= "gsbi_resource",
+		.flags	= IORESOURCE_MEM,
+	},
+};
+
+struct platform_device msm8960_device_uart_gsbi7 = {
+	.name	= "msm_serial_hsl",
+	.id	= 1,
+	.num_resources	= ARRAY_SIZE(resources_uart_gsbi7),
+	.resource	= resources_uart_gsbi7,
+};
+/* } Terry Cheng, 20121210, Add GSB7 for SIM over UART config  */
+
 
 static struct msm_serial_hslite_platform_data uart_gsbi8_pdata = {
 	.line		= 0,
@@ -1703,6 +1736,38 @@ int __init msm_add_sdcc(unsigned int controller, struct mmc_platform_data *plat)
 	pdev->dev.platform_data = plat;
 	return platform_device_register(pdev);
 }
+
+/* Terry Cheng, 20130711, Add GSBI1 I2C { */
+#ifdef CONFIG_SMART_COVER_DETECTION
+static struct resource resources_qup_i2c_gsbi1[] = {
+	{
+		.name	= "gsbi_qup_i2c_addr",
+		.start	= MSM_GSBI1_PHYS,
+		.end	= MSM_GSBI1_PHYS + 4 - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	{
+		.name	= "qup_phys_addr",
+		.start	= MSM_GSBI1_QUP_PHYS,
+		.end	= MSM_GSBI1_QUP_PHYS + MSM_QUP_SIZE - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	{
+		.name	= "qup_err_intr",
+		.start	= MSM8930_GSBI1_QUP_IRQ,
+		.end	= MSM8930_GSBI1_QUP_IRQ,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+struct platform_device msm8960_device_qup_i2c_gsbi1 = {
+	.name		= "qup_i2c",
+	.id		= 1,
+	.num_resources	= ARRAY_SIZE(resources_qup_i2c_gsbi1),
+	.resource	= resources_qup_i2c_gsbi1,
+};
+#endif //CONFIG_SMART_COVER_DETECTION
+/* } Terry Cheng, 20130711, Add GSBI1 I2C  */
 
 static struct resource resources_qup_i2c_gsbi4[] = {
 	{

@@ -43,6 +43,11 @@ static DEFINE_IDR(ctrl_idr);
 static struct device_type slim_dev_type;
 static struct device_type slim_ctrl_type;
 
+/* Jen Chang merge from #22852 for adding debugfs path */
+static void slim_debugfs_init(struct slim_controller *ctrl);
+static void slim_debugfs_exit(struct slim_controller *ctrl);
+/* Jen Chang, 20120924 */
+
 static const struct slim_device_id *slim_match(const struct slim_device_id *id,
 					const struct slim_device *slim_dev)
 {
@@ -481,6 +486,9 @@ static int slim_register_controller(struct slim_controller *ctrl)
 	if (!ctrl->wq)
 		goto err_workq_failed;
 
+/* Jen Chang merge from #22852 for adding debugfs path */
+	slim_debugfs_init(ctrl);
+/* Jen Chang, 20120924 */
 	return 0;
 
 err_workq_failed:
@@ -521,6 +529,9 @@ int slim_del_controller(struct slim_controller *ctrl)
 	struct slim_controller *found;
 	struct sbi_boardinfo *bi;
 
+/* Jen Chang merge from #22852 for adding debugfs path */
+	slim_debugfs_exit(ctrl);
+/* Jen Chang, 20120924 */
 	/* First make sure that this bus was added */
 	mutex_lock(&slim_lock);
 	found = idr_find(&ctrl_idr, ctrl->nr);
@@ -1153,6 +1164,7 @@ static int connect_port_ch(struct slim_controller *ctrl, u8 ch, u32 ph,
 	buf[1] = ctrl->chans[ch].chan;
 	if (la == SLIM_LA_MANAGER)
 		ctrl->ports[pn].flow = flow;
+	pr_err("CODEC connect MC:0x %x, port:%x", mc, pn);
 	ret = slim_processtxn(ctrl, SLIM_MSG_DEST_LOGICALADDR, mc, 0,
 				SLIM_MSG_MT_CORE, NULL, buf, 2, 6, NULL, la,
 				NULL);
@@ -1169,6 +1181,7 @@ static int disconnect_port_ch(struct slim_controller *ctrl, u32 ph)
 	u8 pn = (u8)SLIM_HDL_TO_PORT(ph);
 
 	mc = SLIM_MSG_MC_DISCONNECT_PORT;
+	pr_err("CODEC disconnect port:%x", pn);
 	ret = slim_processtxn(ctrl, SLIM_MSG_DEST_LOGICALADDR, mc, 0,
 				SLIM_MSG_MT_CORE, NULL, &pn, 1, 5,
 				NULL, la, NULL);
@@ -2657,16 +2670,14 @@ int slim_reconfigure_now(struct slim_device *sb)
 		ret = slim_processtxn(ctrl, SLIM_MSG_DEST_BROADCAST,
 			SLIM_MSG_MC_NEXT_SUBFRAME_MODE, 0, SLIM_MSG_MT_CORE,
 			NULL, (u8 *)&subframe, 1, 4, NULL, 0, NULL);
-		dev_dbg(&ctrl->dev, "sending subframe:%d,ret:%d\n",
-				(int)wbuf[0], ret);
+		pr_err("sending subframe:%x,ret:%d\n", wbuf[0], ret);
 	}
 	if (!ret && clkgear != ctrl->clkgear) {
 		wbuf[0] = (u8)(clkgear & 0xFF);
 		ret = slim_processtxn(ctrl, SLIM_MSG_DEST_BROADCAST,
 			SLIM_MSG_MC_NEXT_CLOCK_GEAR, 0, SLIM_MSG_MT_CORE,
 			NULL, wbuf, 1, 4, NULL, 0, NULL);
-		dev_dbg(&ctrl->dev, "sending clkgear:%d,ret:%d\n",
-				(int)wbuf[0], ret);
+		pr_err("sending clkgear:%x,ret:%d\n", wbuf[0], ret);
 	}
 	if (ret)
 		goto revert_reconfig;
@@ -2798,6 +2809,7 @@ int slim_reconfigure_now(struct slim_device *sb)
 		slim_chan_changes(sb, false);
 		mutex_unlock(&ctrl->m_ctrl);
 		mutex_unlock(&ctrl->sched.m_reconf);
+		pr_err("slim reconfig done!");
 		return 0;
 	}
 
@@ -2858,8 +2870,8 @@ int slim_control_ch(struct slim_device *sb, u16 chanh,
 		u8 add_mark_removal  = true;
 
 		slc = &ctrl->chans[chan];
-		dev_dbg(&ctrl->dev, "chan:%d,ctrl:%d,def:%d", chan, chctrl,
-					slc->def);
+		pr_err("chan:%d,ctrl:%d,def:%d, ref:%d", slc->chan,
+				chctrl, slc->def, slc->ref);
 		if (slc->state < SLIM_CH_DEFINED) {
 			ret = -ENOTCONN;
 			break;
@@ -3071,6 +3083,131 @@ clk_pause_ret:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(slim_ctrl_clk_pause);
+
+/* Jen Chang merge from #22852 for adding debugfs path */
+static int slim_laddr_debug_read(struct file *file, char __user *buf,
+	size_t count, loff_t *ppos)
+{
+	struct slim_controller *ctrl = file->private_data;
+	int i, sz, ret;
+	char *prn = kmalloc(count, GFP_KERNEL);
+	if (!prn)
+		return -ENOMEM;
+	mutex_lock(&ctrl->m_ctrl);
+	sz = scnprintf(prn, count, "logical address table for %s\n",
+				dev_name(&ctrl->dev));
+	for (i = 0; i < ctrl->num_dev; i++) {
+		char *lbuf = prn + sz;
+		sz += scnprintf(lbuf, count,
+			"%d: \t0x%x\t0x%x\t0x%x\t0x%x\t0x%x\t0x%x\n", i,
+			ctrl->addrt[i].eaddr[5], ctrl->addrt[i].eaddr[4],
+			ctrl->addrt[i].eaddr[3], ctrl->addrt[i].eaddr[2],
+			ctrl->addrt[i].eaddr[1], ctrl->addrt[i].eaddr[0]);
+	}
+	mutex_unlock(&ctrl->m_ctrl);
+	ret = simple_read_from_buffer(buf, count, ppos, prn, sz);
+	kfree(prn);
+	return ret;
+}
+
+static int slim_ch_debug_read(struct file *file, char __user *buf,
+	size_t count, loff_t *ppos)
+{
+	struct slim_controller *ctrl = file->private_data;
+	int i, sz, ret;
+	char *prn = kmalloc(count, GFP_KERNEL);
+	if (!prn)
+		return -ENOMEM;
+	mutex_lock(&ctrl->m_ctrl);
+	sz = scnprintf(prn, count,
+			"scheduled channels for %s, clkgear:%d, subfrc:0x%x\n",
+				dev_name(&ctrl->dev), ctrl->clkgear,
+				ctrl->sched.subfrmcode);
+	for (i = 0; i < ctrl->sched.num_cc1; i++) {
+		struct slim_ich *slc = ctrl->sched.chc1[i];
+		char *lbuf = prn + sz;
+		int rate = 1;
+		if (slc->prop.baser == SLIM_RATE_4000HZ)
+			rate = 4000;
+		else if (slc->prop.baser == SLIM_RATE_11025HZ)
+			rate = 11025;
+		sz += scnprintf(lbuf, count,
+			"chan:%d\tfreq:%d\tsmplsz:%d",
+			(slc - ctrl->chans), (rate * slc->prop.ratem),
+			slc->prop.sampleszbits);
+		lbuf = prn + sz;
+		sz += scnprintf(lbuf, count,
+			"\toffset:%d\tinterval:%drootexp:%d\n", slc->offset,
+			slc->interval, slc->rootexp);
+	}
+	for (i = 0; i < ctrl->sched.num_cc3; i++) {
+		struct slim_ich *slc = ctrl->sched.chc3[i];
+		char *lbuf = prn + sz;
+		int rate = 1;
+		if (slc->prop.baser == SLIM_RATE_4000HZ)
+			rate = 4000;
+		else if (slc->prop.baser == SLIM_RATE_11025HZ)
+			rate = 11025;
+		sz += scnprintf(lbuf, count,
+			"chan:%d\tfreq:%d\tsmplsz:%d",
+			(slc - ctrl->chans), (rate * slc->prop.ratem),
+			slc->prop.sampleszbits);
+		lbuf = prn + sz;
+		sz += scnprintf(lbuf, count,
+			"\toffset:%d\tinterval:%drootexp:%d\n", slc->offset,
+			slc->interval, slc->rootexp);
+	}
+	mutex_unlock(&ctrl->m_ctrl);
+	ret = simple_read_from_buffer(buf, count, ppos, prn, sz);
+	kfree(prn);
+	return ret;
+}
+
+static int slim_debug_open(struct inode *inode, struct file *file)
+{
+	file->private_data = inode->i_private;
+	return 0;
+}
+
+static const struct file_operations slim_laddr_fops = {
+	.open		= slim_debug_open,
+	.read		= slim_laddr_debug_read,
+};
+
+static const struct file_operations slim_ch_fops = {
+	.open		= slim_debug_open,
+	.read		= slim_ch_debug_read,
+};
+
+static void slim_debugfs_init(struct slim_controller *ctrl)
+{
+	ctrl->debug_root = debugfs_create_dir(dev_name(&ctrl->dev), NULL);
+	if (!IS_ERR(ctrl->debug_root)) {
+		ctrl->debug_clkgear = debugfs_create_u32(
+			"clkgear",
+			S_IRUGO,
+			ctrl->debug_root,
+			(u32 *)&ctrl->clkgear);
+
+		ctrl->debug_laddr = debugfs_create_file(
+			"laddr_table",
+			S_IRUGO,
+			ctrl->debug_root,
+			ctrl, &slim_laddr_fops);
+
+		ctrl->debug_ch = debugfs_create_file("channels",
+			S_IRUGO,
+			ctrl->debug_root,
+			ctrl, &slim_ch_fops);
+	}
+}
+
+static void slim_debugfs_exit(struct slim_controller *ctrl)
+{
+	if (!IS_ERR(ctrl->debug_root))
+		debugfs_remove_recursive(ctrl->debug_root);
+}
+/* Jen Chang, 20120924 */
 
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION("0.1");

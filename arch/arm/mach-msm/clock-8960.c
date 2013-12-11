@@ -19,6 +19,9 @@
 #include <linux/spinlock.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
+/* Terry Cheng, 20121128, Add dump xo information when suspend {*/
+#include <linux/module.h>
+/* } Terry Cheng, 20121128, Add dump xo information when suspend */
 
 #include <asm/clkdev.h>
 #include <asm/mach-types.h>
@@ -34,6 +37,7 @@
 #include "clock-dss-8960.h"
 #include "devices.h"
 #include "clock-pll.h"
+#include <mach/kevent.h>	//Terry Cheng, 20121101, Trigger abnormal camera usage 
 
 #define REG(off)	(MSM_CLK_CTL_BASE + (off))
 #define REG_MM(off)	(MSM_MMSS_CLK_CTL_BASE + (off))
@@ -5933,13 +5937,14 @@ static struct clk_lookup msm_clocks_8930[] = {
 	CLK_LOOKUP("core_clk",		gsbi4_uart_clk.c,	""),
 	CLK_LOOKUP("core_clk",		gsbi5_uart_clk.c, "msm_serial_hsl.0"),
 	CLK_LOOKUP("core_clk",		gsbi6_uart_clk.c, "msm_serial_hs.0"),
-	CLK_LOOKUP("core_clk",		gsbi7_uart_clk.c,	""),
+	CLK_LOOKUP("core_clk",		gsbi7_uart_clk.c,	"msm_serial_hsl.1"),//Terry Cheng, 20121210, Support UART over SIM
 	CLK_LOOKUP("core_clk",		gsbi8_uart_clk.c,	""),
 	CLK_LOOKUP("core_clk",		gsbi9_uart_clk.c,	""),
 	CLK_LOOKUP("core_clk",		gsbi10_uart_clk.c,	""),
 	CLK_LOOKUP("core_clk",		gsbi11_uart_clk.c,	""),
 	CLK_LOOKUP("core_clk",		gsbi12_uart_clk.c,	""),
 	CLK_LOOKUP("core_clk",		gsbi1_qup_clk.c,	"spi_qsd.0"),
+	CLK_LOOKUP("core_clk",		gsbi1_qup_clk.c,	"qup_i2c.1"), //Terry Cheng, 20130711, Add GSBI1 I2C 
 	CLK_LOOKUP("core_clk",		gsbi2_qup_clk.c,	""),
 	CLK_LOOKUP("core_clk",		gsbi3_qup_clk.c,	"qup_i2c.3"),
 	CLK_LOOKUP("core_clk",		gsbi4_qup_clk.c,	"qup_i2c.4"),
@@ -5980,12 +5985,13 @@ static struct clk_lookup msm_clocks_8930[] = {
 	CLK_LOOKUP("core_clk",		ce1_core_clk.c,		"qcrypto.0"),
 	CLK_LOOKUP("dma_bam_pclk",	dma_bam_p_clk.c,	NULL),
 	CLK_LOOKUP("iface_clk",		gsbi1_p_clk.c,		"spi_qsd.0"),
+	CLK_LOOKUP("iface_clk",		gsbi1_p_clk.c,		"qup_i2c.1"),//Terry Cheng, 20130711, Add GSBI1 I2C 
 	CLK_LOOKUP("iface_clk",		gsbi2_p_clk.c,		""),
 	CLK_LOOKUP("iface_clk",		gsbi3_p_clk.c,		"qup_i2c.3"),
 	CLK_LOOKUP("iface_clk",		gsbi4_p_clk.c,		"qup_i2c.4"),
 	CLK_LOOKUP("iface_clk",		gsbi5_p_clk.c,	"msm_serial_hsl.0"),
 	CLK_LOOKUP("iface_clk",		gsbi6_p_clk.c,  "msm_serial_hs.0"),
-	CLK_LOOKUP("iface_clk",		gsbi7_p_clk.c,		""),
+	CLK_LOOKUP("iface_clk",		gsbi7_p_clk.c,		"msm_serial_hsl.1"),//Terry Cheng, 20121210, Support UART over SIM
 	CLK_LOOKUP("iface_clk",		gsbi8_p_clk.c,		""),
 	CLK_LOOKUP("iface_clk",		gsbi9_p_clk.c,		"qup_i2c.0"),
 	CLK_LOOKUP("iface_clk",		gsbi10_p_clk.c,		"qup_i2c.10"),
@@ -6009,8 +6015,10 @@ static struct clk_lookup msm_clocks_8930[] = {
 	CLK_LOOKUP("cam_clk",		cam0_clk.c,	"4-001a"),
 	CLK_LOOKUP("cam_clk",		cam1_clk.c,	"4-006c"),
 	CLK_LOOKUP("cam_clk",		cam1_clk.c,	"4-0048"),
+	CLK_LOOKUP("cam_clk",		cam1_clk.c,	"4-0060"),  //Eric Liu, OV2675 porting (conflict with flash_adp1650, change from 0x30 to 0x60)
 	CLK_LOOKUP("cam_clk",		cam2_clk.c,		NULL),
 	CLK_LOOKUP("cam_clk",		cam0_clk.c,	"4-0020"),
+	CLK_LOOKUP("cam_clk",           cam0_clk.c,     "4-002a"),// sophia, ov8825
 	CLK_LOOKUP("csi_src_clk",	csi0_src_clk.c,		"msm_csid.0"),
 	CLK_LOOKUP("csi_src_clk",	csi1_src_clk.c,		"msm_csid.1"),
 	CLK_LOOKUP("csi_src_clk",	csi2_src_clk.c,		"msm_csid.2"),
@@ -6707,3 +6715,59 @@ struct clock_init_data msm8930_pm8917_clock_init_data __initdata = {
 	.post_init = msm8960_clock_post_init,
 	.late_init = msm8960_clock_late_init,
 };
+/* Terry Cheng, 20121128, Add dump xo information when suspend {*/
+void dump_all_active_clocks(void)
+{
+
+	int i;
+	int size;
+	struct clk *c;
+
+	int msm_cpu_id = 0;
+	struct clk_lookup *clk_loop_map;
+	//Terry Cheng, 20121220, Trigger abnormal camera usage when detect pxo is on during power collapse
+	int is_camera_clock_on = 0;
+	//Terry Cheng, 20130506, Trigger  abnormal camera usage once
+	static int is_send_uevent = 0;
+
+	//Terry Cheng, 20121206, Support multiple platform
+	msm_cpu_id = socinfo_get_msm_cpu();
+	if( (msm_cpu_id == MSM_CPU_8960) || (msm_cpu_id == MSM_CPU_8960AB)){
+		size = ARRAY_SIZE(msm_clocks_8960);
+		clk_loop_map = msm_clocks_8960;
+	}	
+	else if ((msm_cpu_id == MSM_CPU_8930) || (msm_cpu_id == MSM_CPU_8930AA)){
+		size = ARRAY_SIZE(msm_clocks_8930);
+		clk_loop_map = msm_clocks_8930;
+	}	
+	else 
+		return;
+	
+	for(i = 0; i < size; i++) {
+		c = clk_loop_map[i].clk;
+		if (c != NULL) {
+			struct clk *p_clk;
+
+			if (c->ops != NULL && c->ops->get_parent != NULL && c->ops->is_enabled != NULL && c->ops->is_enabled(c)) {
+				p_clk = c->ops->get_parent(c);
+				if (p_clk != NULL) {
+					pr_info("Clock con_id=[%s] dev_id=[%s] is ON. (parent=%s)\r\n",
+						clk_loop_map[i].con_id != NULL ? clk_loop_map[i].con_id : "null",
+						clk_loop_map[i].dev_id != NULL ? clk_loop_map[i].dev_id : "null",
+						p_clk->dbg_name);
+				}
+				/* Terry Cheng, 20121220, Trigger abnormal camera usage when detect pxo is on during power collapse {*/
+				if( (clk_loop_map[i].con_id) != NULL && (!strncmp(clk_loop_map[i].con_id , "csi_src_clk",11 )))
+					is_camera_clock_on=1;
+				/* } Terry Cheng, 20121220, Trigger abnormal camera usage when detect pxo is on during power collapse */
+			}
+		}
+	}
+	//Terry Cheng, 20121220, Trigger abnormal camera usage when detect pxo is on during power collapse
+	if(is_camera_clock_on && is_send_uevent == 0){
+		kevent_trigger(KEVENT_COMP_CAMERA);
+		is_send_uevent = 1; 	//Terry Cheng, 20130506, Trigger  abnormal camera usage once
+	}	
+}
+EXPORT_SYMBOL(dump_all_active_clocks);
+/* } Terry Cheng, 20121128, Add dump xo information when suspend */

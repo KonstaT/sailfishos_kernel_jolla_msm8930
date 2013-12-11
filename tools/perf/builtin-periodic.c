@@ -242,8 +242,10 @@ static int perf_setup_read(struct perf_setup_s *p)
 		if (p->perf_fd[i] == 0)
 			continue;
 		status = read(p->perf_fd[i], &data, sizeof(data));
-		p->data.values += data[0];
-		p->totals.values += data[0];
+		if (status) {
+			p->data.values += data[0];
+			p->totals.values += data[0];
+		}
 	}
 
 	/*

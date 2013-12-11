@@ -109,6 +109,12 @@ int pm8921_bms_get_percent_charge(void);
 int pm8921_bms_get_fcc(void);
 
 /**
+ * pm8921_bms_get_factory_fcc - return manucaturing spec fcc of the battery
+ *
+ */
+int pm8921_bms_get_factory_fcc(void);
+
+/**
  * pm8921_bms_charging_began - function to notify the bms driver that charging
  *				has started. Used by the bms driver to keep
  *				track of chargecycles

@@ -29,11 +29,25 @@
 #include <mach/hardware.h>
 #include <mach/gpio.h>
 #include <mach/clk.h>
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif
+#include <linux/pm_qos.h>
+#include <mach/cpuidle.h>
 
 #include "msm_fb.h"
 #include "mipi_dsi.h"
 #include "mdp.h"
 #include "mdp4.h"
+
+// Jackie 20130304, avoid to turn off LDO23 in CPU idle mode when LCM is on. Terry Cheng, 20130320, Remove PM QOS. RPM let LDO 23 always on. 
+//#define CONFIG_PM_QOS_LCM
+
+#ifdef CONFIG_PM_QOS_LCM
+static struct pm_qos_request pm_qos_req;
+#endif
+
+unsigned int LCD_LOGLEVEL_DLL = 0;  // default log level threshold
 
 u32 dsi_irq;
 u32 esc_byte_ratio;
@@ -49,6 +63,10 @@ static int mipi_dsi_on(struct platform_device *pdev);
 static struct platform_device *pdev_list[MSM_FB_MAX_DEV_LIST];
 static int pdev_list_cnt;
 static struct mipi_dsi_platform_data *mipi_dsi_pdata;
+
+#ifdef CONFIG_PM_LOG
+struct pmlog_device *pmlog_device_display;
+#endif 
 
 static int vsync_gpio = -1;
 
@@ -69,7 +87,7 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	struct msm_fb_data_type *mfd;
 	struct msm_panel_info *pinfo;
 
-	pr_debug("%s+:\n", __func__);
+	LCD_PRINTK(1, "%s()++\n", __func__);
 
 	mfd = platform_get_drvdata(pdev);
 	pinfo = &mfd->panel_info;
@@ -80,6 +98,9 @@ static int mipi_dsi_off(struct platform_device *pdev)
 		down(&mfd->dma->mutex);
 
 	if (mfd->panel_info.type == MIPI_CMD_PANEL) {
+#ifdef CONFIG_PM_QOS_LCM
+		pm_qos_update_request(&pm_qos_req, PM_QOS_DEFAULT_VALUE);
+#endif
 		mipi_dsi_prepare_clocks();
 		mipi_dsi_ahb_ctrl(1);
 		mipi_dsi_clk_enable();
@@ -129,6 +150,13 @@ static int mipi_dsi_off(struct platform_device *pdev)
 		up(&mfd->dma->mutex);
 
 	pr_debug("End of %s ....:\n", __func__);
+#ifdef CONFIG_PM_LOG
+		ret = pmlog_device_off(pmlog_device_display);
+		if (ret)
+			pr_err("pmlog_device_off fail rc = %d\n", ret);
+#endif
+
+	LCD_PRINTK(1, "%s()--\n", __func__);
 
 	return ret;
 }
@@ -147,7 +175,7 @@ static int mipi_dsi_on(struct platform_device *pdev)
 	u32 dummy_xres, dummy_yres;
 	int target_type = 0;
 
-	pr_debug("%s+:\n", __func__);
+	LCD_PRINTK(1, "%s()++\n", __func__);
 
 	mfd = platform_get_drvdata(pdev);
 	fbi = mfd->fbi;
@@ -157,6 +185,12 @@ static int mipi_dsi_on(struct platform_device *pdev)
 
 	if (mipi_dsi_pdata && mipi_dsi_pdata->dsi_power_save)
 		mipi_dsi_pdata->dsi_power_save(1);
+
+#ifdef CONFIG_PM_LOG
+		ret = pmlog_device_on(pmlog_device_display);
+		if (ret)
+			pr_err("pmlog_device_on fail rc = %d\n", ret);
+#endif
 
 	cont_splash_clk_ctrl(0);
 	mipi_dsi_prepare_clocks();
@@ -317,16 +351,33 @@ static int mipi_dsi_on(struct platform_device *pdev)
 	mdp_bus_scale_update_request(2);
 #endif
 
+#ifdef CONFIG_PM_QOS_LCM
+	if (mfd->panel_info.type == MIPI_CMD_PANEL)
+	{
+		pm_qos_update_request(&pm_qos_req, msm_cpuidle_get_deep_idle_latency());
+	}
+#endif
+
 	if (mdp_rev >= MDP_REV_41)
 		mutex_unlock(&mfd->dma->ov_mutex);
 	else
 		up(&mfd->dma->mutex);
 
 	pr_debug("End of %s....:\n", __func__);
+	LCD_PRINTK(1, "%s()--\n", __func__);
 
 	return ret;
 }
 
+void lcm_pwr_ctrl(int on)
+{
+	if (mipi_dsi_pdata && mipi_dsi_pdata->dsi_power_save)
+	{
+		LCD_PRINTK(1, "!!! %s(), on=%d\n", __func__, on);
+		mdelay(20);
+		mipi_dsi_pdata->dsi_power_save(on);
+	}
+}
 
 static int mipi_dsi_resource_initialized;
 
@@ -421,11 +472,12 @@ static int mipi_dsi_probe(struct platform_device *pdev)
 
 		if (mipi_dsi_pdata->splash_is_enabled &&
 			!mipi_dsi_pdata->splash_is_enabled()) {
-			mipi_dsi_ahb_ctrl(1);
+			// Jackie 20121115, eliminate warning log of mipi_dsi initial clock.
+			//mipi_dsi_ahb_ctrl(1);
 			MIPI_OUTP(MIPI_DSI_BASE + 0x118, 0);
 			MIPI_OUTP(MIPI_DSI_BASE + 0x0, 0);
 			MIPI_OUTP(MIPI_DSI_BASE + 0x200, 0);
-			mipi_dsi_ahb_ctrl(0);
+			//mipi_dsi_ahb_ctrl(0);
 		}
 		mipi_dsi_resource_initialized = 1;
 
@@ -472,6 +524,11 @@ static int mipi_dsi_probe(struct platform_device *pdev)
 	pdata->on = mipi_dsi_on;
 	pdata->off = mipi_dsi_off;
 	pdata->next = pdev;
+
+#ifdef CONFIG_PM_LOG
+	// Register PM log
+	pmlog_device_display = pmlog_register_device(&pdev->dev);
+#endif
 
 	/*
 	 * get/set panel specific fb info
@@ -581,8 +638,21 @@ static int mipi_dsi_probe(struct platform_device *pdev)
 
 	pdev_list[pdev_list_cnt++] = pdev;
 
-	if (!mfd->cont_splash_done)
+	// Jackie 20121115, eliminate warning log of mipi_dsi initial clock.
+	if( (!mfd->cont_splash_done) &&
+	(mipi_dsi_pdata->splash_is_enabled && mipi_dsi_pdata->splash_is_enabled()) )
 		cont_splash_clk_ctrl(1);
+
+	// Jackie 20130319, eliminate warning log of mipi_dsi initial clock.
+	mipi_dsi_clk_ctrl_4probe(1, pinfo->mipi.esc_byte_ratio);
+		
+#ifdef CONFIG_PM_QOS_LCM
+	if (mfd->panel_info.type == MIPI_CMD_PANEL)
+	{
+		pm_qos_add_request(&pm_qos_req, PM_QOS_CPU_DMA_LATENCY,
+					PM_QOS_DEFAULT_VALUE);
+	}
+#endif
 
 return 0;
 
@@ -595,7 +665,18 @@ static int mipi_dsi_remove(struct platform_device *pdev)
 {
 	struct msm_fb_data_type *mfd;
 
+#ifdef CONFIG_PM_LOG
+	// UnRegister PM log
+	pmlog_unregister_device(pmlog_device_display);
+#endif
 	mfd = platform_get_drvdata(pdev);
+
+#ifdef CONFIG_PM_QOS_LCM
+	if (mfd->panel_info.type == MIPI_CMD_PANEL)
+	{
+		pm_qos_remove_request(&pm_qos_req);
+	}
+#endif		
 	iounmap(mipi_dsi_base);
 	return 0;
 }

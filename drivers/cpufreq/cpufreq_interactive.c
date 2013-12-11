@@ -18,8 +18,8 @@
 
 #include <linux/cpu.h>
 #include <linux/cpumask.h>
-#include <linux/cpufreq.h>
 #include <linux/module.h>
+#include <linux/cpufreq.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
 #include <linux/tick.h>
@@ -971,6 +971,9 @@ static int __init cpufreq_interactive_init(void)
 	spin_lock_init(&up_cpumask_lock);
 	spin_lock_init(&down_cpumask_lock);
 	mutex_init(&set_speed_lock);
+
+	/* Kick the kthread to idle */
+	wake_up_process(up_task);
 
 	idle_notifier_register(&cpufreq_interactive_idle_nb);
 	INIT_WORK(&inputopen.inputopen_work, cpufreq_interactive_input_open);

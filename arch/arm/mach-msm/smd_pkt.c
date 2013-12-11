@@ -32,6 +32,9 @@
 #include <linux/poll.h>
 #include <asm/ioctls.h>
 #include <linux/wakelock.h>
+/* Terry Cheng, 201210, Provide interface for QMI to show wake up reason {*/
+#include <linux/proc_fs.h>
+/* } Terry Cheng, 201210, Provide interface for QMI to show wake up reason */
 
 #include <mach/msm_smd.h>
 #include <mach/peripheral-loader.h>
@@ -84,6 +87,10 @@ struct smd_pkt_dev {
 struct class *smd_pkt_classp;
 static dev_t smd_pkt_number;
 static struct delayed_work loopback_work;
+/* Terry Cheng, 201210, Provide interface for QMI to show wake up reason {*/
+static struct proc_dir_entry *procfs_smd_wake = NULL;
+static char wake_process[20] = {0};
+/* } Terry Cheng, 201210, Provide interface for QMI to show wake up reason */
 static void check_and_wakeup_reader(struct smd_pkt_dev *smd_pkt_devp);
 static void check_and_wakeup_writer(struct smd_pkt_dev *smd_pkt_devp);
 static uint32_t is_modem_smsm_inited(void);
@@ -302,6 +309,9 @@ ssize_t smd_pkt_read(struct file *file,
 	int pkt_size;
 	struct smd_pkt_dev *smd_pkt_devp;
 	unsigned long flags;
+	//20121102, Terry Cheng, Show which process read QMI message when resume from suspsned
+	extern int is_show_who_read_smd_pkt_read;
+
 
 	smd_pkt_devp = file->private_data;
 
@@ -330,6 +340,13 @@ wait_for_packet:
 				     (smd_cur_packet_size(smd_pkt_devp->ch) > 0
 				      && smd_read_avail(smd_pkt_devp->ch)) ||
 				     smd_pkt_devp->has_reset);
+	/* 20121102, Terry Cheng, Show which process read QMI message when resume from suspsned {*/
+	if(is_show_who_read_smd_pkt_read){
+		printk("smd_pkt_read: pid: %d, tgid: %d, task name: %s\n", current->pid, current->tgid, current->comm);
+		is_show_who_read_smd_pkt_read = 0;
+		memcpy(wake_process, current->comm, sizeof(wake_process));	
+	}	
+	/* } 20121102, Terry Cheng, Show which process read QMI message when resume from suspsned */
 
 	mutex_lock(&smd_pkt_devp->rx_lock);
 	if (smd_pkt_devp->has_reset) {
@@ -940,6 +957,26 @@ static const struct file_operations smd_pkt_fops = {
 	.poll = smd_pkt_poll,
 	.unlocked_ioctl = smd_pkt_ioctl,
 };
+/* Terry Cheng, 201210, Provide interface for QMI to show wake up reason {*/
+static int proc_read_smd_wake(char *page, char **start, off_t off, int count,
+	int *eof, void *data)
+{
+	char *p = page;
+	int len;
+
+	p += snprintf(p, sizeof(wake_process), "%s", wake_process);
+
+	len = (p - page) - off;
+	if (len < 0)
+		len = 0;
+
+	*eof = (len <= count) ? 1 : 0;
+	*start = page + off;
+	//Reset after read
+	memset(wake_process, 0, sizeof(wake_process));
+	return len;
+}
+/* } Terry Cheng, 201210, Provide interface for QMI to show wake up reason */
 
 static int __init smd_pkt_init(void)
 {
@@ -1024,6 +1061,12 @@ static int __init smd_pkt_init(void)
 
 	INIT_DELAYED_WORK(&loopback_work, loopback_probe_worker);
 
+	/* Terry Cheng, 201210, Provide interface for QMI to show wake up reason {*/
+	procfs_smd_wake= create_proc_entry("smd_wake", S_IRUGO, NULL);
+	if (!procfs_smd_wake)
+		goto error2;
+	procfs_smd_wake->read_proc = proc_read_smd_wake;
+	/* } Terry Cheng, 201210, Provide interface for QMI to show wake up reason */
 	D_STATUS("SMD Packet Port Driver Initialized.\n");
 	return 0;
 

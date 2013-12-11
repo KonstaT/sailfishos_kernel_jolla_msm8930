@@ -17,6 +17,16 @@ config PN544_NFC
 	  To compile this driver as a module, choose m here. The module will
 	  be called pn544.
 
+# Jen add for factory test scripts
+config PN544_TEST
+	bool "PN544 NFC TEST"
+	depends on PN544_NFC
+	default n
+	---help---
+	  Say yes if you want to do PN544 read model id, version, selftest.....
+	  This is for i2c connected version. If unsure, say N here.
+# Jen add 201217
+
 config NFC_PN533
 	tristate "NXP PN533 USB driver"
 	depends on USB

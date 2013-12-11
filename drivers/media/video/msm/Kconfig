@@ -66,6 +66,13 @@ config MT9M114
         depends on MSM_CAMERA
         ---help---
         APTINA 1.26 MP yuv Sensor
+
+# Eric Liu+
+config OV2675
+	bool "Sensor ov2675 (Omnivision 2MP)"
+	depends on MSM_CAMERA
+# Eric Liu-
+
 config WEBCAM_OV7692
 	bool "Sensor OV7692 (VGA YUV)"
 	depends on MSM_CAMERA && ARCH_MSM8X60 && !MSM_CAMERA_V4L2
@@ -185,6 +192,17 @@ config MSM_CAMERA_FLASH_TPS61310
 	  Enable support for LED flash for msm camera.
 	  It is a Texas Instruments multiple LED Flash
 	  for camera flash and video light applications.
+
+config MSM_CAMERA_FLASH_ADP1650
+        bool "Qualcomm MSM camera adp1650 flash support"
+        depends on MSM_CAMERA
+        default y
+        ---help---
+          Enable support for LED flash for msm camera.
+          It is a Texas Instruments multiple LED Flash
+          for camera flash and video light applications.
+
+
 
 config IMX072
 	bool "Sensor imx072 (Sony 5M)"

@@ -83,6 +83,8 @@ obj-$(CONFIG_FB_MSM_MIPI_DSI_TRULY) += mipi_truly.o
 obj-$(CONFIG_FB_MSM_MIPI_DSI_NT35510) += mipi_NT35510.o
 obj-$(CONFIG_FB_MSM_MIPI_DSI_NT35516) += mipi_truly_tft540960_1_e.o
 obj-$(CONFIG_FB_MSM_MIPI_DSI_SIMULATOR) += mipi_simulator.o
+obj-$(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) += mipi_truly_otm9608a.o
+obj-$(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516) += mipi_trust_nt35516.o
 
 # MIPI Bridge
 obj-$(CONFIG_FB_MSM_MIPI_DSI_TC358764_DSI2LVDS) += mipi_tc358764_dsi2lvds.o
@@ -128,6 +130,8 @@ obj-y += mipi_truly_tft540960_1_e_video_qhd_pt.o mipi_truly_tft540960_1_e_cmd_qh
 obj-y += mipi_chimei_wxga_pt.o
 obj-y += mipi_chimei_wuxga.o
 obj-y += mipi_truly_video_wvga_pt.o
+obj-y += mipi_truly_otm9608a_video_qhd.o mipi_truly_otm9608a_cmd_qhd.o
+obj-y += mipi_trust_nt35516_video_qhd.o mipi_trust_nt35516_cmd_qhd.o
 else
 obj-$(CONFIG_FB_MSM_MIPI_TOSHIBA_VIDEO_WVGA_PT) += mipi_toshiba_video_wvga_pt.o
 obj-$(CONFIG_FB_MSM_MIPI_TOSHIBA_VIDEO_WSVGA_PT) += mipi_toshiba_video_wsvga_pt.o
@@ -147,6 +151,10 @@ obj-$(CONFIG_FB_MSM_MIPI_NT35516_VIDEO_QHD_PT) += mipi_truly_tft540960_1_e_video
 obj-$(CONFIG_FB_MSM_MIPI_SIMULATOR_VIDEO) += mipi_simulator_video.o
 obj-$(CONFIG_FB_MSM_MIPI_CHIMEI_WXGA) += mipi_chimei_wxga_pt.o
 obj-$(CONFIG_FB_MSM_MIPI_CHIMEI_WUXGA) += mipi_chimei_wuxga.o
+obj-$(CONFIG_FB_MSM_MIPI_TRULY_OTM9608A_CMD_QHD) += mipi_truly_otm9608a_cmd_qhd.o
+obj-$(CONFIG_FB_MSM_MIPI_TRULY_OTM9608A_VIDEO_QHD) += mipi_truly_otm9608a_video_qhd.o
+obj-$(CONFIG_FB_MSM_MIPI_TRUST_NT35516_CMD_QHD) += mipi_trust_nt35516_cmd_qhd.o
+obj-$(CONFIG_FB_MSM_MIPI_TRUST_NT35516_VIDEO_QHD) += mipi_trust_nt35516_video_qhd.o
 endif
 
 obj-$(CONFIG_FB_MSM_LCDC_PANEL) += lcdc_panel.o

@@ -87,12 +87,23 @@ enum msm_usb_phy_type {
 	SNPS_28NM_INTEGRATED_PHY,
 };
 
+//Carl Chang+
+#if 0 //origin
 #define IDEV_CHG_MAX	1500
 #define IDEV_CHG_MIN	500
 #define IUNIT		100
 
 #define IDEV_ACA_CHG_MAX	1500
 #define IDEV_ACA_CHG_LIMIT	500
+#else //Boston
+#define IDEV_CHG_MAX	1100      //Boston,HW require USB IN input current limit = 1100mA
+#define IDEV_CHG_MIN	500
+#define IUNIT		100
+
+#define IDEV_ACA_CHG_MAX	1100  //Boston,HW require USB IN input current limit = 1100mA
+#define IDEV_ACA_CHG_LIMIT	500
+#endif
+//Carl Chang-
 
 /**
  * Different states involved in USB charger detection.
@@ -151,6 +162,7 @@ enum usb_chg_type {
 	USB_ACA_C_CHARGER,
 	USB_ACA_DOCK_CHARGER,
 	USB_PROPRIETARY_CHARGER,
+	USB_OTHER_DCP_CHARGER,
 };
 
 /**
@@ -368,6 +380,7 @@ struct msm_otg {
 	u8 active_tmout;
 	struct hrtimer timer;
 	enum usb_vdd_type vdd_type;
+	struct delayed_work sdp_check; // check if usb device receive pc configure packet
 };
 
 struct msm_hsic_host_platform_data {

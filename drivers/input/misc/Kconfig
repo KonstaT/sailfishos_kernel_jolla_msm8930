@@ -368,6 +368,15 @@ config INPUT_CM109
 	  To compile this driver as a module, choose M here: the module will be
 	  called cm109.
 
+config INPUT_TOH_EVENT
+	tristate "The Other Half event driver"
+	depends on TOH
+	help
+	  This option enables support for The Other Half event driver for Jolla
+	  smart phones. The driver reports to userspace SW_DOCK events when
+	  the cover is inserted / detached and registers / unregisters the main
+	  toh-core device accordingly.
+
 config INPUT_TWL4030_PWRBUTTON
 	tristate "TWL4030 Power button Driver"
 	depends on TWL4030_CORE

@@ -416,5 +416,12 @@ void cpufreq_frequency_table_get_attr(struct cpufreq_frequency_table *table,
 
 void cpufreq_frequency_table_put_attr(unsigned int cpu);
 
+/* Terry Cheng, 20120827, Patch 2-phase power-efficiency ondemand algorithm {*/
+extern DEFINE_PER_CPU(int, cpufreq_init_done);
+/* } Terry Cheng, 20120827, Patch 2-phase power-efficiency ondemand algorithm */
+
+/* Terry Cheng, 20121011, Save cpu freq run time in pmlog { */
+ssize_t dump_cpu_time_in_state( char *buf, int bufer_size, int cpu);
+/* } Terry Cheng, 20121011, Save cpu freq run time in pmlog */
 
 #endif /* _LINUX_CPUFREQ_H */

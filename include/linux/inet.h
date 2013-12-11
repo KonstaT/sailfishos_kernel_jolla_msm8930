@@ -55,3 +55,6 @@ extern __be32 in_aton(const char *str);
 extern int in4_pton(const char *src, int srclen, u8 *dst, int delim, const char **end);
 extern int in6_pton(const char *src, int srclen, u8 *dst, int delim, const char **end);
 #endif	/* _LINUX_INET_H */
+/* 20120323, Bright Lee, socket port monitor for modem { */
+void update_socket_port_status (unsigned type, unsigned long port, unsigned Open);
+/* } Bright Lee, 20120323 */

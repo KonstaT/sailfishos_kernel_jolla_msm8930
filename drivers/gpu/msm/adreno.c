@@ -262,7 +262,36 @@ static int adreno_setup_pt(struct kgsl_device *device,
 	if (result)
 		goto unmap_memstore_desc;
 
+	if (soc_class_is_msm8930()) {
+		result = kgsl_mmu_map_global(pagetable,
+				&adreno_dev->scratch_pad,
+				GSL_PT_PAGE_RV | GSL_PT_PAGE_WV);
+		if (result)
+			goto unmap_setstate_desc;
+
+		result = kgsl_mmu_map_global(pagetable,
+				&adreno_dev->scratch_cmd,
+				GSL_PT_PAGE_RV | GSL_PT_PAGE_WV);
+		if (result)
+			goto unmap_scratch_pad_desc;
+
+		result = kgsl_mmu_map_global(pagetable,
+				&adreno_dev->scratch_quad_vertices_restore,
+				GSL_PT_PAGE_RV | GSL_PT_PAGE_WV);
+		if (result)
+			goto unmap_scratch_cmd_desc;
+	}
+
 	return result;
+
+unmap_scratch_cmd_desc:
+	kgsl_mmu_unmap(pagetable, &adreno_dev->scratch_cmd);
+
+unmap_scratch_pad_desc:
+	kgsl_mmu_unmap(pagetable, &adreno_dev->scratch_pad);
+
+unmap_setstate_desc:
+	kgsl_mmu_unmap(pagetable, &device->mmu.setstate_memory);
 
 unmap_memstore_desc:
 	kgsl_mmu_unmap(pagetable, &device->memstore);
@@ -1180,6 +1209,17 @@ adreno_probe(struct platform_device *pdev)
 	adreno_dev = ADRENO_DEVICE(device);
 	device->parentdev = &pdev->dev;
 
+	if (soc_class_is_msm8930()) {
+		status = kgsl_allocate_contiguous(&adreno_dev->scratch_pad,
+				4096);
+		status = kgsl_allocate_contiguous(&adreno_dev->scratch_cmd,
+				4096);
+		status = kgsl_allocate_contiguous(
+				&adreno_dev->scratch_quad_vertices_restore,
+				14 << 2);
+		adreno_dev->on_resume_issueib = false;
+	}
+
 	status = adreno_ringbuffer_init(device);
 	if (status != 0)
 		goto error;
@@ -1217,6 +1257,13 @@ static int __devexit adreno_remove(struct platform_device *pdev)
 
 	adreno_ringbuffer_close(&adreno_dev->ringbuffer);
 	kgsl_device_platform_remove(device);
+
+	if (soc_class_is_msm8930()) {
+		kgsl_sharedmem_free(&adreno_dev->scratch_pad);
+		kgsl_sharedmem_free(&adreno_dev->scratch_cmd);
+		kgsl_sharedmem_free(
+				&adreno_dev->scratch_quad_vertices_restore);
+	}
 
 	return 0;
 }
@@ -2010,6 +2057,9 @@ static int adreno_suspend_context(struct kgsl_device *device)
 		adreno_drawctxt_switch(adreno_dev, NULL, 0);
 		status = adreno_idle(device);
 	}
+
+	if (soc_class_is_msm8930())
+		adreno_dev->on_resume_issueib = true;
 
 	return status;
 }

@@ -259,6 +259,8 @@ struct interrupt_stat {
 	uint32_t smsm_in_count;
 	uint32_t smsm_out_hardcode_count;
 	uint32_t smsm_out_config_count;
+	uint32_t smd_in_count_resume; //Terry Cheng, 20121226, Save smd and smsm wakeup app statistics
+	uint32_t smsm_in_count_resume; //Terry Cheng, 20121226, Save smd and smsm wakeup app statistics
 };
 extern struct interrupt_stat interrupt_stats[NUM_SMD_SUBSYSTEMS];
 

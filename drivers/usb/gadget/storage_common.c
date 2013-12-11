@@ -64,6 +64,8 @@
 #define FSG_VENDOR_ID	0x0525	/* NetChip */
 #define FSG_PRODUCT_ID	0xa4a5	/* Linux-USB File-backed Storage Gadget */
 
+extern unsigned int FUMS_DLL;
+#define storage_printk(level,fmt,args...) if (level <= FUMS_DLL) printk(fmt,##args);
 
 /*-------------------------------------------------------------------------*/
 
@@ -662,7 +664,7 @@ static int fsg_lun_open(struct fsg_lun *curlun, const char *filename)
 	if (ro)
 		filp = filp_open(filename, O_RDONLY | O_LARGEFILE, 0);
 	if (IS_ERR(filp)) {
-		LINFO(curlun, "unable to open backing file: %s\n", filename);
+		storage_printk(0,"USB::ums %s unable to open backing file: %s\n",__func__,filename);
 		return PTR_ERR(filp);
 	}
 
@@ -672,7 +674,7 @@ static int fsg_lun_open(struct fsg_lun *curlun, const char *filename)
 	if (filp->f_path.dentry)
 		inode = filp->f_path.dentry->d_inode;
 	if (!inode || (!S_ISREG(inode->i_mode) && !S_ISBLK(inode->i_mode))) {
-		LINFO(curlun, "invalid file type: %s\n", filename);
+		storage_printk(0,"USB::ums %s invalid file type: %s\n",__func__,filename);
 		goto out;
 	}
 
@@ -681,7 +683,7 @@ static int fsg_lun_open(struct fsg_lun *curlun, const char *filename)
 	 * If we can't write the file, use it read-only.
 	 */
 	if (!filp->f_op || !(filp->f_op->read || filp->f_op->aio_read)) {
-		LINFO(curlun, "file not readable: %s\n", filename);
+		storage_printk(0,"USB::ums %s file not readable: %s\n",__func__,filename);
 		goto out;
 	}
 	if (!(filp->f_op->write || filp->f_op->aio_write))
@@ -689,7 +691,7 @@ static int fsg_lun_open(struct fsg_lun *curlun, const char *filename)
 
 	size = i_size_read(inode->i_mapping->host);
 	if (size < 0) {
-		LINFO(curlun, "unable to find file size: %s\n", filename);
+		storage_printk(0,"USB::ums %s unable to find filed size: %s\n",__func__,filename);
 		rc = (int) size;
 		goto out;
 	}
@@ -711,13 +713,12 @@ static int fsg_lun_open(struct fsg_lun *curlun, const char *filename)
 		min_sectors = 300;	/* Smallest track is 300 frames */
 		if (num_sectors >= 256*60*75) {
 			num_sectors = 256*60*75 - 1;
-			LINFO(curlun, "file too big: %s\n", filename);
-			LINFO(curlun, "using only first %d blocks\n",
-					(int) num_sectors);
+			storage_printk(0,"USB::ums %s file too big:%s\n",__func__,filename);
+                        storage_printk(0,"USB::ums %s using only first %d blocks\n",__func__,(int)num_sectors);
 		}
 	}
 	if (num_sectors < min_sectors) {
-		LINFO(curlun, "file too small: %s\n", filename);
+		printk("Sonia::ums %s file too small:%s num_sectors=%d\n",__func__,filename,(int)num_sectors);
 		rc = -ETOOSMALL;
 		goto out;
 	}
@@ -930,7 +931,7 @@ static ssize_t fsg_store_file(struct device *dev, struct device_attribute *attr,
 	 * if the media was removed
 	 */
 	if (curlun->prevent_medium_removal && fsg_lun_is_open(curlun)) {
-		LDBG(curlun, "eject attempt prevented\n");
+		storage_printk(0,"USB::ums %s eject attempt prevented\n",__func__);
 		return -EBUSY;				/* "Door is locked" */
 	}
 #endif
@@ -954,5 +955,6 @@ static ssize_t fsg_store_file(struct device *dev, struct device_attribute *attr,
 					SS_NOT_READY_TO_READY_TRANSITION;
 	}
 	up_write(filesem);
+	storage_printk(0,"USB::ums %s rc=%d count=%d\n",__func__,rc,count);
 	return (rc < 0 ? rc : count);
 }

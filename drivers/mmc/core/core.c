@@ -373,10 +373,10 @@ void mmc_start_bkops(struct mmc_card *card, bool from_exception)
 		if (!card->ext_csd.raw_bkops_status)
 			goto out;
 
-		pr_info("%s: %s: raw_bkops_status=0x%x, from_exception=%d\n",
-			mmc_hostname(card->host), __func__,
-			card->ext_csd.raw_bkops_status,
-			from_exception);
+		pr_debug("%s: %s: raw_bkops_status=0x%x, from_exception=%d\n",
+			 mmc_hostname(card->host), __func__,
+			 card->ext_csd.raw_bkops_status,
+			 from_exception);
 	}
 
 	/*
@@ -390,7 +390,7 @@ void mmc_start_bkops(struct mmc_card *card, bool from_exception)
 		mmc_card_set_need_bkops(card);
 		goto out;
 	}
-	pr_info("%s: %s: Starting bkops\n", mmc_hostname(card->host), __func__);
+	pr_debug("%s: %s: Starting bkops\n", mmc_hostname(card->host), __func__);
 
 	err = __mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
 			EXT_CSD_BKOPS_START, 1, 0, false, false);

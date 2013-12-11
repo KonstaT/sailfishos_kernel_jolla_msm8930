@@ -33,9 +33,26 @@
 #include <linux/regulator/consumer.h>
 #include <linux/serial_core.h> /* for TCGETS */
 #include <linux/slab.h>
+/* Jen Chang add for debugfs */
+#include <linux/gpio.h>
+#include <linux/debugfs.h>
+#include <linux/wakelock.h>
+#include <asm/atomic.h> //add for FTD to get/set it_enable status
+#include <linux/seq_file.h> //add for FTD to get signed curr value
+
+//add for pm log
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif
+/* Jen Chang, 20121217 */
 
 #define DRIVER_CARD	"PN544 NFC"
 #define DRIVER_DESC	"NFC driver for PN544"
+
+ /* Jen Chang add for debug log */
+extern struct dentry *kernel_debuglevel_dir;
+union PN544_DEBUGLEVEL PN544_DEBUG_DLL;
+/* Jen Chang, 20121217 */
 
 static struct i2c_device_id pn544_id_table[] = {
 	{ PN544_DRIVER_NAME, 0 },
@@ -60,21 +77,78 @@ enum pn544_irq {
 struct pn544_info {
 	struct miscdevice miscdev;
 	struct i2c_client *i2c_dev;
-	struct regulator_bulk_data regs[3];
-
+/* Jen Chang mark sim power because it is controlled by sim driver */
+//	struct regulator_bulk_data regs[3];
+	struct regulator_bulk_data regs[1];
+/* Jen Chang, 20130206 */
 	enum pn544_state state;
 	wait_queue_head_t read_wait;
 	loff_t read_offset;
 	enum pn544_irq read_irq;
 	struct mutex read_mutex; /* Serialize read_irq access */
 	struct mutex mutex; /* Serialize info struct access */
+	spinlock_t irq_enabled_lock;
+/* Jen Chang add for wake up cpu by reading nfc tag card */
+	struct wake_lock wake_lock;
+/* Jen Chang, 20121217 */
 	u8 *buf;
 	size_t buflen;
+	bool irq_enabled;
+	int irq_gpio;
+#ifdef CONFIG_PM_LOG
+	 struct pmlog_device *pmlog_device;
+#endif //CONFIG_PM_LOG
 };
 
-static const char reg_vdd_io[]	= "Vdd_IO";
-static const char reg_vbat[]	= "VBat";
-static const char reg_vsim[]	= "VSim";
+/* Jen Chang modify for requesting requlator */
+static const char reg_vdd_io[]	= "NFC_VEN"; //Vdd_IO
+static const char reg_vbat[]	= "NFC_VBAT"; //VBat
+static const char reg_vsim[]	= "NFC_PMVCC"; //VSim
+
+//add for FTD to get i2c response id
+static u8 dev_i2c_response = 0;
+//add for script test
+static atomic_t antenna_sleftest_status = ATOMIC_INIT(0);
+static u8 force_antenna_test = 0;
+
+/* Jen Chang mark sim power because it is controlled by sim driver */
+static struct regulator_bulk_data nfc_regs[] = {
+	{ .supply = reg_vdd_io,	.min_uV = 1800000,	.max_uV = 1800000 },
+//	{ .supply = reg_vsim, 	.min_uV = 1800000,	.max_uV = 2950000 },
+};
+/* Jen Chang, 20130206 */
+
+//add for debugfs with i2c test
+static char test_addr_result = 0;
+static ssize_t pn544_i2c_test_set(struct device *dev,
+			  struct device_attribute *attr,  const char *buf, size_t count)
+{
+	struct pn544_info *info = dev_get_drvdata(dev);
+	struct i2c_client *client = info->i2c_dev;
+	char test_addr = PN544_I2C_ADDR;
+	int ret = 0;
+
+	ret = i2c_master_send(client, &test_addr, 1);
+	pn544_printk(NFC_DEBUGFS, "--%s: send(0x%x) to pn544, ret(%d)--\n", __func__, test_addr, ret);
+
+	ret = i2c_master_recv(client, &test_addr_result, 1);
+	pn544_printk(NFC_DEBUGFS, "--%s: recv(0x%x) from pn544, ret(%d)--\n", __func__, test_addr_result, ret);
+
+	return count;
+}
+
+static ssize_t pn544_i2c_test_get(struct device *dev,
+			  struct device_attribute *attr, char *buf)
+{
+//	struct pn544_info *info = dev_get_drvdata(dev);
+//	struct i2c_client *client = info->i2c_dev;
+//	struct pn544_nfc_platform_data *pdata = client->dev.platform_data;
+
+/* Jen Chang modify for check nfc chip is ok or not */
+	return snprintf(buf, PAGE_SIZE, "%d,%d\n", dev_i2c_response, test_addr_result);
+/* Jen Chang, 20130221 */
+}
+/* Jen Chang, 20130114 */
 
 /* sysfs interface */
 static ssize_t pn544_test(struct device *dev,
@@ -93,10 +167,21 @@ static int pn544_enable(struct pn544_info *info, int mode)
 	struct i2c_client *client = info->i2c_dev;
 
 	int r;
+#ifdef CONFIG_PM_LOG
+	int rc = 0;
+#endif	//CONFIG_PM_LOG
 
 	r = regulator_bulk_enable(ARRAY_SIZE(info->regs), info->regs);
 	if (r < 0)
 		return r;
+
+/* Jen Chang add for pm log */
+#ifdef CONFIG_PM_LOG
+	rc = pmlog_device_on(info->pmlog_device);
+	if(rc)
+		 printk("pmlog_device_on fall rc = %d\n",rc);
+#endif
+/* Jen Chang, 20121217 */
 
 	pdata = client->dev.platform_data;
 	info->read_irq = PN544_NONE;
@@ -105,10 +190,10 @@ static int pn544_enable(struct pn544_info *info, int mode)
 
 	if (mode) {
 		info->state = PN544_ST_FW_READY;
-		dev_dbg(&client->dev, "now in FW-mode\n");
+		pn544_printk(NFC_INFO, "%s: now in FW-mod\n", __func__);
 	} else {
 		info->state = PN544_ST_READY;
-		dev_dbg(&client->dev, "now in HCI-mode\n");
+		pn544_printk(NFC_INFO, "%s: now in HCI-mod\n", __func__);
 	}
 
 	usleep_range(10000, 15000);
@@ -121,462 +206,208 @@ static void pn544_disable(struct pn544_info *info)
 	struct pn544_nfc_platform_data *pdata;
 	struct i2c_client *client = info->i2c_dev;
 
+#ifdef CONFIG_PM_LOG
+	int rc = 0;
+#endif	//CONFIG_PM_LOG
+
+/* Jen Chang add for pm log */
+#ifdef CONFIG_PM_LOG
+	rc = pmlog_device_off(info->pmlog_device);
+	if(rc)
+		 printk("pmlog_device_off fall rc = %d\n",rc);
+#endif
+/* Jen Chang, 20121217 */
+
 	pdata = client->dev.platform_data;
 	if (pdata->disable)
 		pdata->disable();
 
-	info->state = PN544_ST_COLD;
-
-	dev_dbg(&client->dev, "Now in OFF-mode\n");
+	pn544_printk(NFC_INFO, "%s: now in OFF-mod\n", __func__);
 
 	msleep(PN544_RESETVEN_TIME);
 
-	info->read_irq = PN544_NONE;
 	regulator_bulk_disable(ARRAY_SIZE(info->regs), info->regs);
 }
 
-static int check_crc(u8 *buf, int buflen)
+static void pn544_disable_irq(struct pn544_info *pn544_dev)
 {
-	u8 len;
-	u16 crc;
+	unsigned long flags = 0;;
 
-	len = buf[0] + 1;
-	if (len < 4 || len != buflen || len > PN544_MSG_MAX_SIZE) {
-		pr_err(PN544_DRIVER_NAME
-		       ": CRC; corrupt packet len %u (%d)\n", len, buflen);
-		print_hex_dump(KERN_DEBUG, "crc: ", DUMP_PREFIX_NONE,
-			       16, 2, buf, buflen, false);
-		return -EPERM;
-	}
-	crc = crc_ccitt(0xffff, buf, len - 2);
-	crc = ~crc;
-
-	if (buf[len-2] != (crc & 0xff) || buf[len-1] != (crc >> 8)) {
-		pr_err(PN544_DRIVER_NAME ": CRC error 0x%x != 0x%x 0x%x\n",
-		       crc, buf[len-1], buf[len-2]);
-
-		print_hex_dump(KERN_DEBUG, "crc: ", DUMP_PREFIX_NONE,
-			       16, 2, buf, buflen, false);
-		return -EPERM;
-	}
-	return 0;
-}
-
-static int pn544_i2c_write(struct i2c_client *client, u8 *buf, int len)
-{
-	int r;
-
-	if (len < 4 || len != (buf[0] + 1)) {
-		dev_err(&client->dev, "%s: Illegal message length: %d\n",
-			__func__, len);
-		return -EINVAL;
+	spin_lock_irqsave(&pn544_dev->irq_enabled_lock, flags);
+	if (pn544_dev->irq_enabled) {
+		disable_irq_nosync(pn544_dev->i2c_dev->irq);
+		pn544_dev->irq_enabled = false;
 	}
 
-	if (check_crc(buf, len))
-		return -EINVAL;
-
-	usleep_range(3000, 6000);
-
-	r = i2c_master_send(client, buf, len);
-	dev_dbg(&client->dev, "send: %d\n", r);
-
-	if (r == -EREMOTEIO) { /* Retry, chip was in standby */
-		usleep_range(6000, 10000);
-		r = i2c_master_send(client, buf, len);
-		dev_dbg(&client->dev, "send2: %d\n", r);
-	}
-
-	if (r != len)
-		return -EREMOTEIO;
-
-	return r;
+	spin_unlock_irqrestore(&pn544_dev->irq_enabled_lock, flags);
 }
 
-static int pn544_i2c_read(struct i2c_client *client, u8 *buf, int buflen)
+static irqreturn_t pn544_dev_irq_handler(int irq, void *dev_id)
 {
-	int r;
-	u8 len;
+	struct pn544_info *pn544_dev = dev_id;
 
-	/*
-	 * You could read a packet in one go, but then you'd need to read
-	 * max size and rest would be 0xff fill, so we do split reads.
-	 */
-	r = i2c_master_recv(client, &len, 1);
-	dev_dbg(&client->dev, "recv1: %d\n", r);
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
 
-	if (r != 1)
-		return -EREMOTEIO;
-
-	if (len < PN544_LLC_HCI_OVERHEAD)
-		len = PN544_LLC_HCI_OVERHEAD;
-	else if (len > (PN544_MSG_MAX_SIZE - 1))
-		len = PN544_MSG_MAX_SIZE - 1;
-
-	if (1 + len > buflen) /* len+(data+crc16) */
-		return -EMSGSIZE;
-
-	buf[0] = len;
-
-	r = i2c_master_recv(client, buf + 1, len);
-	dev_dbg(&client->dev, "recv2: %d\n", r);
-
-	if (r != len)
-		return -EREMOTEIO;
-
-	usleep_range(3000, 6000);
-
-	return r + 1;
+	if (!gpio_get_value(pn544_dev->irq_gpio)) {
+		pn544_printk(NFC_DEBUG, "%s: irq release!\n", __func__);
+		return IRQ_HANDLED;
 }
 
-static int pn544_fw_write(struct i2c_client *client, u8 *buf, int len)
-{
-	int r;
+	pn544_disable_irq(pn544_dev);
 
-	dev_dbg(&client->dev, "%s\n", __func__);
-
-	if (len < PN544_FW_HEADER_SIZE ||
-	    (PN544_FW_HEADER_SIZE + (buf[1] << 8) + buf[2]) != len)
-		return -EINVAL;
-
-	r = i2c_master_send(client, buf, len);
-	dev_dbg(&client->dev, "fw send: %d\n", r);
-
-	if (r == -EREMOTEIO) { /* Retry, chip was in standby */
-		usleep_range(6000, 10000);
-		r = i2c_master_send(client, buf, len);
-		dev_dbg(&client->dev, "fw send2: %d\n", r);
-	}
-
-	if (r != len)
-		return -EREMOTEIO;
-
-	return r;
-}
-
-static int pn544_fw_read(struct i2c_client *client, u8 *buf, int buflen)
-{
-	int r, len;
-
-	if (buflen < PN544_FW_HEADER_SIZE)
-		return -EINVAL;
-
-	r = i2c_master_recv(client, buf, PN544_FW_HEADER_SIZE);
-	dev_dbg(&client->dev, "FW recv1: %d\n", r);
-
-	if (r < 0)
-		return r;
-
-	if (r < PN544_FW_HEADER_SIZE)
-		return -EINVAL;
-
-	len = (buf[1] << 8) + buf[2];
-	if (len == 0) /* just header, no additional data */
-		return r;
-
-	if (len > buflen - PN544_FW_HEADER_SIZE)
-		return -EMSGSIZE;
-
-	r = i2c_master_recv(client, buf + PN544_FW_HEADER_SIZE, len);
-	dev_dbg(&client->dev, "fw recv2: %d\n", r);
-
-	if (r != len)
-		return -EINVAL;
-
-	return r + PN544_FW_HEADER_SIZE;
-}
-
-static irqreturn_t pn544_irq_thread_fn(int irq, void *dev_id)
-{
-	struct pn544_info *info = dev_id;
-	struct i2c_client *client = info->i2c_dev;
-
-	BUG_ON(!info);
-	BUG_ON(irq != info->i2c_dev->irq);
-
-	dev_dbg(&client->dev, "IRQ\n");
-
-	mutex_lock(&info->read_mutex);
-	info->read_irq = PN544_INT;
-	mutex_unlock(&info->read_mutex);
-
-	wake_up_interruptible(&info->read_wait);
+	/* Wake up waiting readers */
+	wake_up(&pn544_dev->read_wait);
 
 	return IRQ_HANDLED;
 }
 
-static enum pn544_irq pn544_irq_state(struct pn544_info *info)
-{
-	enum pn544_irq irq;
-
-	mutex_lock(&info->read_mutex);
-	irq = info->read_irq;
-	mutex_unlock(&info->read_mutex);
-	/*
-	 * XXX: should we check GPIO-line status directly?
-	 * return pdata->irq_status() ? PN544_INT : PN544_NONE;
-	 */
-
-	return irq;
-}
-
-static ssize_t pn544_read(struct file *file, char __user *buf,
+static ssize_t pn544_dev_read(struct file *filp, char __user *buf,
 			  size_t count, loff_t *offset)
 {
-	struct pn544_info *info = container_of(file->private_data,
-					       struct pn544_info, miscdev);
-	struct i2c_client *client = info->i2c_dev;
-	enum pn544_irq irq;
-	size_t len;
-	int r = 0;
 
-	dev_dbg(&client->dev, "%s: info: %p, count: %zu\n", __func__,
-		info, count);
+	struct pn544_info *pn544_dev = filp->private_data;
+	char tmp[PN544_MAX_BUFFER_SIZE];
+	int ret,i;
 
-	mutex_lock(&info->mutex);
+	if (count > PN544_MAX_BUFFER_SIZE)
+		count = PN544_MAX_BUFFER_SIZE;
 
-	if (info->state == PN544_ST_COLD) {
-		r = -ENODEV;
-		goto out;
+	pn544_printk(NFC_INFO, "%s : reading %zu bytes.\n", __func__, count);
+
+	mutex_lock(&pn544_dev->read_mutex);
+
+	if (!gpio_get_value(pn544_dev->irq_gpio)) {
+		if (filp->f_flags & O_NONBLOCK) {
+			ret = -EAGAIN;
+			goto fail;
+	}
+		pn544_dev->irq_enabled = true;
+		enable_irq(pn544_dev->i2c_dev->irq);
+		ret = wait_event_interruptible(pn544_dev->read_wait,
+				gpio_get_value(pn544_dev->irq_gpio));
+
+		pn544_disable_irq(pn544_dev);
+		if (ret)
+			goto fail;
+		}
+
+	/* Read data */
+	ret = i2c_master_recv(pn544_dev->i2c_dev, tmp, count);
+	mutex_unlock(&pn544_dev->read_mutex);
+
+	if (ret < 0) {
+		pr_err("%s: i2c_master_recv returned %d\n", __func__, ret);
+		return ret;
+		}
+
+	if (ret > count) {
+		pr_err("%s: received too many bytes from i2c (%d)\n",
+			__func__, ret);
+		return -EIO;
+		}
+
+	if (copy_to_user(buf, tmp, ret)) {
+		pr_warning("%s : failed to copy to user space\n", __func__);
+		return -EFAULT;
 	}
 
-	irq = pn544_irq_state(info);
-	if (irq == PN544_NONE) {
-		if (file->f_flags & O_NONBLOCK) {
-			r = -EAGAIN;
-			goto out;
-		}
+	pn544_printk(NFC_DEBUG, "IFD->PC:");
+	for(i = 0; i < ret; i++)
+		pn544_printk(NFC_DEBUG, " %02X", tmp[i]);
 
-		if (wait_event_interruptible(info->read_wait,
-					     (info->read_irq == PN544_INT))) {
-			r = -ERESTARTSYS;
-			goto out;
-		}
+	pn544_printk(NFC_DEBUG, "\n");
+
+/* Jen Chang add to wait cmd stable according to Edom FAE suggestion */
+//	usleep_range(6000, 10000);
+/* Jen Chang, 20121217 */
+
+	return ret;
+
+fail:
+	mutex_unlock(&pn544_dev->read_mutex);
+	return ret;
 	}
 
-	if (info->state == PN544_ST_FW_READY) {
-		len = min(count, info->buflen);
-
-		mutex_lock(&info->read_mutex);
-		r = pn544_fw_read(info->i2c_dev, info->buf, len);
-		info->read_irq = PN544_NONE;
-		mutex_unlock(&info->read_mutex);
-
-		if (r < 0) {
-			dev_err(&info->i2c_dev->dev, "FW read failed: %d\n", r);
-			goto out;
-		}
-
-		print_hex_dump(KERN_DEBUG, "FW read: ", DUMP_PREFIX_NONE,
-			       16, 2, info->buf, r, false);
-
-		*offset += r;
-		if (copy_to_user(buf, info->buf, r)) {
-			r = -EFAULT;
-			goto out;
-		}
-	} else {
-		len = min(count, info->buflen);
-
-		mutex_lock(&info->read_mutex);
-		r = pn544_i2c_read(info->i2c_dev, info->buf, len);
-		info->read_irq = PN544_NONE;
-		mutex_unlock(&info->read_mutex);
-
-		if (r < 0) {
-			dev_err(&info->i2c_dev->dev, "read failed (%d)\n", r);
-			goto out;
-		}
-		print_hex_dump(KERN_DEBUG, "read: ", DUMP_PREFIX_NONE,
-			       16, 2, info->buf, r, false);
-
-		*offset += r;
-		if (copy_to_user(buf, info->buf, r)) {
-			r = -EFAULT;
-			goto out;
-		}
-	}
-
-out:
-	mutex_unlock(&info->mutex);
-
-	return r;
-}
-
-static unsigned int pn544_poll(struct file *file, poll_table *wait)
+static ssize_t pn544_dev_write(struct file *filp, const char __user *buf,
+		size_t count, loff_t *offset)
 {
-	struct pn544_info *info = container_of(file->private_data,
-					       struct pn544_info, miscdev);
-	struct i2c_client *client = info->i2c_dev;
-	int r = 0;
 
-	dev_dbg(&client->dev, "%s: info: %p\n", __func__, info);
+	struct pn544_info  *pn544_dev;
+	char tmp[PN544_MAX_BUFFER_SIZE];
+	int ret,i;
 
-	mutex_lock(&info->mutex);
+	pn544_dev = filp->private_data;
 
-	if (info->state == PN544_ST_COLD) {
-		r = -ENODEV;
-		goto out;
-	}
+	if (count > PN544_MAX_BUFFER_SIZE)
+		count = PN544_MAX_BUFFER_SIZE;
 
-	poll_wait(file, &info->read_wait, wait);
-
-	if (pn544_irq_state(info) == PN544_INT) {
-		r = POLLIN | POLLRDNORM;
-		goto out;
-	}
-out:
-	mutex_unlock(&info->mutex);
-
-	return r;
-}
-
-static ssize_t pn544_write(struct file *file, const char __user *buf,
-			   size_t count, loff_t *ppos)
-{
-	struct pn544_info *info = container_of(file->private_data,
-					       struct pn544_info, miscdev);
-	struct i2c_client *client = info->i2c_dev;
-	ssize_t	len;
-	int r;
-
-	dev_dbg(&client->dev, "%s: info: %p, count %zu\n", __func__,
-		info, count);
-
-	mutex_lock(&info->mutex);
-
-	if (info->state == PN544_ST_COLD) {
-		r = -ENODEV;
-		goto out;
-	}
-
-	/*
-	 * XXX: should we detect rset-writes and clean possible
-	 * read_irq state
-	 */
-	if (info->state == PN544_ST_FW_READY) {
-		size_t fw_len;
-
-		if (count < PN544_FW_HEADER_SIZE) {
-			r = -EINVAL;
-			goto out;
+	if (copy_from_user(tmp, buf, count)) {
+		pr_err("%s : failed to copy from user space\n", __func__);
+		return -EFAULT;
 		}
 
-		len = min(count, info->buflen);
-		if (copy_from_user(info->buf, buf, len)) {
-			r = -EFAULT;
-			goto out;
+	pn544_printk(NFC_INFO, "%s : writing %zu bytes.\n", __func__, count);
+
+	/* Write data */
+	ret = i2c_master_send(pn544_dev->i2c_dev, tmp, count);
+
+	if (ret != count) {
+		pr_err("%s : i2c_master_send returned %d\n", __func__, ret);
+		ret = -EIO;
 		}
 
-		print_hex_dump(KERN_DEBUG, "FW write: ", DUMP_PREFIX_NONE,
-			       16, 2, info->buf, len, false);
+	pn544_printk(NFC_DEBUG, "PC->IFD:");
 
-		fw_len = PN544_FW_HEADER_SIZE + (info->buf[1] << 8) +
-			info->buf[2];
+	for(i = 0; i < count; i++)
+		pn544_printk(NFC_DEBUG, " %02X", tmp[i]);
 
-		if (len > fw_len) /* 1 msg at a time */
-			len = fw_len;
+	pn544_printk(NFC_DEBUG, "\n");
 
-		r = pn544_fw_write(info->i2c_dev, info->buf, len);
-	} else {
-		if (count < PN544_LLC_MIN_SIZE) {
-			r = -EINVAL;
-			goto out;
-		}
+/* Jen Chang add to wait cmd stable according to Edom FAE suggestion */
+//	usleep_range(6000, 10000);
+/* Jen Chang, 20121217 */
 
-		len = min(count, info->buflen);
-		if (copy_from_user(info->buf, buf, len)) {
-			r = -EFAULT;
-			goto out;
-		}
-
-		print_hex_dump(KERN_DEBUG, "write: ", DUMP_PREFIX_NONE,
-			       16, 2, info->buf, len, false);
-
-		if (len > (info->buf[0] + 1)) /* 1 msg at a time */
-			len  = info->buf[0] + 1;
-
-		r = pn544_i2c_write(info->i2c_dev, info->buf, len);
-	}
-out:
-	mutex_unlock(&info->mutex);
-
-	return r;
-
+	return ret;
 }
 
 static long pn544_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	struct pn544_info *info = container_of(file->private_data,
-					       struct pn544_info, miscdev);
+	struct pn544_info *info = file->private_data;
 	struct i2c_client *client = info->i2c_dev;
 	struct pn544_nfc_platform_data *pdata;
-	unsigned int val;
 	int r = 0;
 
-	dev_dbg(&client->dev, "%s: info: %p, cmd: 0x%x\n", __func__, info, cmd);
+	pn544_printk(NFC_DEBUG, "%s: info: %p, cmd: 0x%x\n", __func__, info, cmd);
 
 	mutex_lock(&info->mutex);
+ 	pdata = info->i2c_dev->dev.platform_data;
 
-	if (info->state == PN544_ST_COLD) {
-		r = -ENODEV;
-		goto out;
-	}
-
-	pdata = info->i2c_dev->dev.platform_data;
 	switch (cmd) {
-	case PN544_GET_FW_MODE:
-		dev_dbg(&client->dev, "%s:  PN544_GET_FW_MODE\n", __func__);
+	case PN544_SET_PWR:
+		pdata = client->dev.platform_data;
+		pn544_printk(NFC_INFO, "%s: PN544_SET_PWR_MODE\n", __func__);
 
-		val = (info->state == PN544_ST_FW_READY);
-		if (copy_to_user((void __user *)arg, &val, sizeof(val))) {
-			r = -EFAULT;
-			goto out;
-		}
-
-		break;
-
-	case PN544_SET_FW_MODE:
-		dev_dbg(&client->dev, "%s:  PN544_SET_FW_MODE\n", __func__);
-
-		if (copy_from_user(&val, (void __user *)arg, sizeof(val))) {
-			r = -EFAULT;
-			goto out;
-		}
-
-		if (val) {
-			if (info->state == PN544_ST_FW_READY)
-				break;
-
+ 		if (arg == 2) {
+ 			pn544_disable(info);
+			pn544_enable(info, FW_MODE);
+		} else if (arg == 1) {
+			pn544_enable(info, HCI_MODE);
+		} else if (arg == 0) {
 			pn544_disable(info);
-			r = pn544_enable(info, FW_MODE);
-			if (r < 0)
-				goto out;
 		} else {
-			if (info->state == PN544_ST_READY)
-				break;
-			pn544_disable(info);
-			r = pn544_enable(info, HCI_MODE);
-			if (r < 0)
+			dev_err(&client->dev, "[PN544] the pwr set error...");
+			r = -EINVAL;
 				goto out;
 		}
-		file->f_pos = info->read_offset;
 		break;
+ 	default:
+		dev_err(&client->dev, "[PN544] The IOCTL isn't exist!!\n");
 
-	case TCGETS:
-		dev_dbg(&client->dev, "%s:  TCGETS\n", __func__);
-
-		r = -ENOIOCTLCMD;
-		break;
-
-	default:
-		dev_err(&client->dev, "Unknown ioctl 0x%x\n", cmd);
-		r = -ENOIOCTLCMD;
+		r = -EINVAL;
 		break;
 	}
-
 out:
 	mutex_unlock(&info->mutex);
-
 	return r;
 }
 
@@ -587,25 +418,14 @@ static int pn544_open(struct inode *inode, struct file *file)
 	struct i2c_client *client = info->i2c_dev;
 	int r = 0;
 
-	dev_dbg(&client->dev, "%s: info: %p, client %p\n", __func__,
-		info, info->i2c_dev);
+	pn544_printk(NFC_INFO, "%s: info: %p, client %p\n", __func__, info, client);
+
+	file->private_data = info;
 
 	mutex_lock(&info->mutex);
-
-	/*
-	 * Only 1 at a time.
-	 * XXX: maybe user (counter) would work better
-	 */
-	if (info->state != PN544_ST_COLD) {
-		r = -EBUSY;
-		goto out;
-	}
-
-	file->f_pos = info->read_offset;
 	r = pn544_enable(info, HCI_MODE);
-
-out:
 	mutex_unlock(&info->mutex);
+
 	return r;
 }
 
@@ -615,8 +435,7 @@ static int pn544_close(struct inode *inode, struct file *file)
 					       struct pn544_info, miscdev);
 	struct i2c_client *client = info->i2c_dev;
 
-	dev_dbg(&client->dev, "%s: info: %p, client %p\n",
-		__func__, info, info->i2c_dev);
+	pn544_printk(NFC_INFO, "%s: info: %p, client %p\n", __func__, info, client);
 
 	mutex_lock(&info->mutex);
 	pn544_disable(info);
@@ -628,9 +447,8 @@ static int pn544_close(struct inode *inode, struct file *file)
 static const struct file_operations pn544_fops = {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
-	.read		= pn544_read,
-	.write		= pn544_write,
-	.poll		= pn544_poll,
+	.read		= pn544_dev_read,
+	.write		= pn544_dev_write,
 	.open		= pn544_open,
 	.release	= pn544_close,
 	.unlocked_ioctl	= pn544_ioctl,
@@ -640,15 +458,14 @@ static const struct file_operations pn544_fops = {
 static int pn544_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
-	struct pn544_info *info;
+	struct pn544_info *info = i2c_get_clientdata(client);
 	int r = 0;
 
-	dev_info(&client->dev, "***\n%s: client %p\n***\n", __func__, client);
-
-	info = i2c_get_clientdata(client);
-	dev_info(&client->dev, "%s: info: %p, client %p\n", __func__,
-		 info, client);
-
+	pn544_printk(NFC_INFO, "%s: info: %p, client %p\n", __func__, info, client);
+	/* Terry Cheng, 20130306, Check whether has nfc hardware. If no nfc hardware, return OK {*/
+	if (!dev_i2c_response)
+		return 0;
+	/* } Terry Cheng, 20130306, Check whether has nfc hardware. If no nfc hardware, return OK */
 	mutex_lock(&info->mutex);
 
 	switch (info->state) {
@@ -663,6 +480,10 @@ static int pn544_suspend(struct device *dev)
 		 * Allowing low power mode for the regulator is potentially
 		 * dangerous if pn544 does not go to suspension.
 		 */
+	/* Jen Chang mark it to avoid to unsleep */
+	// To wake up cpu by reading nfc tag card
+	//	enable_irq_wake(info->i2c_dev->irq);
+	/* Jen Chang, 20130114 */
 		break;
 
 	case PN544_ST_COLD:
@@ -679,8 +500,7 @@ static int pn544_resume(struct device *dev)
 	struct pn544_info *info = i2c_get_clientdata(client);
 	int r = 0;
 
-	dev_dbg(&client->dev, "%s: info: %p, client %p\n", __func__,
-		info, client);
+	pn544_printk(NFC_INFO, "%s: info: %p, client %p\n", __func__, info, client);
 
 	mutex_lock(&info->mutex);
 
@@ -691,6 +511,11 @@ static int pn544_resume(struct device *dev)
 		 * pn544_suspend, we should go back to normal mode
 		 * here.
 		 */
+	/* Jen Chang mark it to avoid to unsleep */
+	// To wake up cpu by reading nfc tag card
+	//	disable_irq_wake(info->i2c_dev->irq);
+	//	wake_lock_timeout(&info->wake_lock, 5 * HZ);
+	/* Jen Chang, 20130114 */
 		break;
 
 	case PN544_ST_COLD:
@@ -708,18 +533,627 @@ static int pn544_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(pn544_pm_ops, pn544_suspend, pn544_resume);
 #endif
 
-static struct device_attribute pn544_attr =
-	__ATTR(nfc_test, S_IRUGO, pn544_test, NULL);
+static struct device_attribute pn544_attr[] = {
+	__ATTR(nfc_test, S_IRUGO, pn544_test, NULL),
+/* Jen Chang add to do i2c test */
+	__ATTR(i2c_test, (S_IWUSR | S_IWGRP | S_IRUGO), pn544_i2c_test_get, pn544_i2c_test_set),
+/* Jen Chang, 20121217 */
+};
+
+/* Jen Chang modify for FTD and EM mode */
+#ifdef CONFIG_DEBUG_FS
+static struct dentry *dent;
+
+//add for debugfs with irq gpio test
+static int pn544_host_int_gpio_get(void *data, u64 *value)
+{
+	int gpio;
+
+	gpio = gpio_get_value(PN544_HOST_INT_GPIO);
+
+	pn544_printk(NFC_DEBUGFS, "host_int_gpio is %s\n", gpio? "high":"low");
+
+	*value = gpio;
+
+	return 0;
+}
+
+static int pn544_host_int_gpio_set(void *data, u64 value)
+{
+	if(value == 1)
+	{
+		gpio_set_value(PN544_HOST_INT_GPIO, 1);
+		pn544_printk(NFC_DEBUGFS, "--%s: set host_int_gpio to be high!!--\n", __func__);
+	}
+	else if(value == 0)
+	{
+		gpio_set_value(PN544_HOST_INT_GPIO, 0);
+		pn544_printk(NFC_DEBUGFS, "--%s: set host_int_gpio to be low!!--\n", __func__);
+	}
+	else
+		pn544_printk(NFC_DEBUGFS, "--%s: Unsupport value!!--\n", __func__);
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(pn544_host_int_gpio_fops, pn544_host_int_gpio_get, pn544_host_int_gpio_set, "%llu\n");
+
+//add for debugfs with enable gpio test
+static int pn544_enable_gpio_get(void *data, u64 *value)
+{
+	int gpio;
+
+	gpio = gpio_get_value(PN544_ENABLE_GPIO);
+
+	pn544_printk(NFC_DEBUGFS, "enable_gpio is %s\n", gpio? "high":"low");
+
+	*value = gpio;
+
+	return 0;
+}
+
+static int pn544_enable_gpio_set(void *data, u64 value)
+{
+	if(value == 1)
+	{
+		gpio_set_value(PN544_ENABLE_GPIO, 1);
+		pn544_printk(NFC_DEBUGFS, "--%s: set enable_gpio to be high!!--\n", __func__);
+	}
+	else if(value == 0)
+	{
+		gpio_set_value(PN544_ENABLE_GPIO, 0);
+		pn544_printk(NFC_DEBUGFS, "--%s: set enable_gpio to be low!!--\n", __func__);
+	}
+	else
+		pn544_printk(NFC_DEBUGFS, "--%s: Unsupport value!!--\n", __func__);
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(pn544_enable_gpio_fops, pn544_enable_gpio_get, pn544_enable_gpio_set, "%llu\n");
+
+//add for debugfs with fw_reset gpio test
+static int pn544_fw_reset_get(void *data, u64 *value)
+{
+	int gpio;
+
+	gpio = gpio_get_value(PN544_FW_RESET_GPIO);
+
+	pn544_printk(NFC_DEBUGFS, "fw_reset_gpio_fops is %s\n", gpio? "high":"low");
+
+	*value = gpio;
+
+	return 0;
+}
+
+static int pn544_fw_reset_set(void *data, u64 value)
+{
+	if(value == 1)
+	{
+		gpio_set_value(PN544_FW_RESET_GPIO, 1);
+		pn544_printk(NFC_DEBUGFS, "--%s: set fw_reset_gpio_fops to be high!!--\n", __func__);
+	}
+	else if(value == 0)
+	{
+		gpio_set_value(PN544_FW_RESET_GPIO, 0);
+		pn544_printk(NFC_DEBUGFS, "--%s: set fw_reset_gpio_fops to be low!!--\n", __func__);
+	}
+	else
+		pn544_printk(NFC_DEBUGFS, "--%s: Unsupport value!!--\n", __func__);
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(pn544_fw_reset_gpio_fops, pn544_fw_reset_get, pn544_fw_reset_set, "%llu\n");
+
+/* Jen Chang add for check nfc chip is ok or not */
+//add for debugfs with dev_i2c_response
+static int pn544_dev_i2c_response_get(void *data, u64 *value)
+{
+	pn544_printk(NFC_DEBUGFS, "dev_i2c_response is %d\n", dev_i2c_response);
+
+	*value = dev_i2c_response;
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(pn544_dev_i2c_response_fops, pn544_dev_i2c_response_get, NULL, "%llu\n");
+/* Jen Chang, 20130221 */
+
+#ifdef CONFIG_PN544_TEST
+//add for reading chip id
+static int pn544_read_chip_id_open(struct inode *inode, struct file *file)
+{
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
+
+	file->private_data = inode->i_private;
+
+	return 0;
+}
+
+static int pn544_read_chip_id_read(struct file *file, __user char *buffer, size_t count,
+			loff_t *ppos)
+{
+	struct pn544_info *info = file->private_data;
+	struct i2c_client *client = info->i2c_dev;
+	u16 chip_id = 0;
+	int ret = 0, copy_size = 0;
+	char buf[64];
+
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
+
+	/* add *ppos check for cat command from shell to avoid to execute this operation twice
+		(cat command will issue twice because of checking eof) */
+	if (*ppos == 0) {
+		pn544_disable(info);
+		pn544_enable(info, HCI_MODE);
+		PN544_NFC_TEST(r_ver, client, &pn544_test_info);
+		pn544_disable (info);
+
+		chip_id = (dev_i2c_response << 8) | pn544_test_info.chip_version.sw_ver.value_byte[2];
+
+		pn544_printk(NFC_DEBUGFS, "--%s: recv chip id[0x%x] from pn544--\n",
+			__func__, chip_id);
+
+		copy_size = sizeof(buf);
+
+		ret = snprintf(buf, copy_size - ret, "%d,", dev_i2c_response);
+		ret += snprintf(buf + ret, copy_size - ret, "%d\n", pn544_test_info.chip_version.sw_ver.value_byte[2]);
+
+		pn544_printk(NFC_DEBUGFS, "--%s: ret = %d, buf(%s)--\n",
+			__func__, ret, buf);
+	}
+
+	return simple_read_from_buffer(buffer, count, ppos, buf, ret);
+}
+
+static const struct file_operations pn544_read_chip_id_fops = {
+	.open		= pn544_read_chip_id_open,
+	.read		= pn544_read_chip_id_read,
+};
+
+//add for reading FW version
+static int pn544_read_sw_version_open(struct inode *inode, struct file *file)
+{
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
+
+	file->private_data = inode->i_private;
+
+	return 0;
+}
+
+static int pn544_read_sw_version_read(struct file *file, __user char *buffer, size_t count,
+			loff_t *ppos)
+{
+	struct pn544_info *info = file->private_data;
+	struct i2c_client *client = info->i2c_dev;
+	int ret = 0, copy_size = 0;
+	char buf[64];
+
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
+
+	/* add *ppos check for cat command from shell to avoid to execute this operation twice
+		(cat command will issue twice because of checking eof) */
+	if (*ppos == 0) {
+		pn544_disable(info);
+		pn544_enable(info, HCI_MODE);
+		PN544_NFC_TEST(r_ver, client, &pn544_test_info);
+		pn544_disable (info);
+
+		pn544_printk(NFC_DEBUGFS, "--%s: recv sw version[0x%x] from pn544--\n",
+			__func__,  pn544_test_info.chip_version.sw_ver.value);
+
+		copy_size = sizeof(buf);
+
+		ret = snprintf(buf, copy_size - ret, "chip-%d", pn544_test_info.chip_version.sw_ver.value_byte[1]);
+		ret += snprintf(buf + ret, copy_size - ret, "-%d\n", pn544_test_info.chip_version.sw_ver.value_byte[0]);
+
+		pn544_printk(NFC_DEBUGFS, "--%s: ret = %d, buf(%s)--\n",
+			__func__, ret, buf);
+	}
+
+	return simple_read_from_buffer(buffer, count, ppos, buf, ret);
+}
+
+static const struct file_operations pn544_read_sw_version_fops = {
+	.open		= pn544_read_sw_version_open,
+	.read		= pn544_read_sw_version_read,
+};
+
+//add for self test with test script via HCI command
+//Antenna self-test
+static int pn544_antenna_selftset_open(struct inode *inode, struct file *file)
+{
+	file->private_data = inode->i_private;
+
+	pn544_printk(NFC_TEST, "--%s: start nfc antenna selftest process...--\n", __func__);
+
+	atomic_set(&antenna_sleftest_status, 1);
+
+	return 0;
+}
+
+static int pn544_antenna_selftset_read(struct file *file, __user char *buffer, size_t count,
+			loff_t *ppos)
+{
+	struct pn544_info *info = file->private_data;
+	int ret = 0, copy_size = 0;
+	char buf[64];
+
+	pn544_printk(NFC_TEST, "--%s: count = %Zd--\n", __func__, count);
+
+	/* add *ppos check for cat command from shell to avoid to execute this operation twice
+		(cat command will issue twice because of checking eof) */
+	if (*ppos == 0) {
+			if (atomic_read(&antenna_sleftest_status) != 0 && force_antenna_test == 0) {
+				pn544_printk(NFC_TEST, "--%s:  Need to write tolerance to do antenna selftest first--\n",
+					__func__);
+				return -EBUSY;
+			}
+
+		#if 0
+			if (count >= sizeof(pn544_test_info.antenna_selftest_threshold)) {
+				pn544_printk(NFC_TEST, "--%s: Read byte is too big!--\n",
+					__func__);
+				return -EINVAL;
+			}
+		#endif
+
+			pn544_disable(info);
+			pn544_enable(info, HCI_MODE);
+			PN544_NFC_TEST(antenna_self_test, info->i2c_dev, &pn544_test_info);
+			pn544_disable (info);
+			force_antenna_test = 0;
+
+		pn544_printk(NFC_DEBUGFS, "--%s: test result is [0x%08x]\n",
+			__func__, pn544_test_info.antenna_selftest_threshold.value);
+
+		copy_size = sizeof(buf);
+
+		ret = snprintf(buf, copy_size - ret, "%d,", pn544_test_info.antenna_selftest_threshold.value_byte[0]);
+		ret += snprintf(buf + ret, copy_size - ret, "%d,", pn544_test_info.antenna_selftest_threshold.value_byte[1]);
+		ret += snprintf(buf + ret, copy_size - ret, "%d,", pn544_test_info.antenna_selftest_threshold.value_byte[2]);
+		ret += snprintf(buf + ret, copy_size - ret, "%d\n", pn544_test_info.antenna_selftest_threshold.value_byte[3]);
+
+		pn544_printk(NFC_DEBUGFS, "--%s: ret = %d, buf(%s)--\n",
+			__func__, ret, buf);
+	}
+
+	return simple_read_from_buffer(buffer, count, ppos, buf, ret);
+}
+
+static ssize_t pn544_antenna_selftset_write(struct file *file,
+	const char __user *buffer, size_t count, loff_t *ppos)
+{
+	int ret, i = 0;
+	char *buf = (char *) __get_free_page(GFP_USER);
+	char *tmp = NULL;
+
+	pn544_printk(NFC_TEST, "--%s--\n", __func__);
+
+	if (!buf) {
+		pn544_printk(NFC_DEBUGFS, "--%s: can't get free GFP_USER page--\n", __func__);
+		ret = -ENOMEM;
+		atomic_set(&antenna_sleftest_status, 0);
+		goto out;
+	}
+
+	if (count >= PAGE_SIZE) {
+		pn544_printk(NFC_DEBUGFS, "--%s: count(%d) is bigger than PAGE_SIZE(%ld)--\n",
+			__func__, count, PAGE_SIZE);
+		ret = -EINVAL;
+		atomic_set(&antenna_sleftest_status, 0);
+		goto out;
+	}
+
+	ret = copy_from_user(buf, buffer, count);
+	if (ret) {
+		pn544_printk(NFC_DEBUGFS, "--%s: copy_from_user failed, ret(%d)--\n",
+			__func__, ret);
+		ret = -EFAULT;
+		atomic_set(&antenna_sleftest_status, 0);
+		goto out;
+	}
+
+	ret = count;
+	buf[count] = '\0';
+
+	tmp = buf;
+	while (i < 5) {
+		if (i < 4) {
+			pn544_test_info.antenna_loop_tolerance.value_byte[i] =
+				simple_strtol(tmp, NULL, 0);
+		} else {
+
+			force_antenna_test = simple_strtol(tmp, NULL, 0);
+		}
+		tmp = strchr(tmp, ',');
+		if (tmp == NULL)
+			break;
+
+		tmp++;
+		i++;
+	}
+
+	pn544_printk(NFC_TEST, "--%s: tolerance is [%08x]--\n",
+		__func__, pn544_test_info.antenna_loop_tolerance.value);
+
+	atomic_set(&antenna_sleftest_status, 0);
+
+ out:
+	free_page((unsigned long)buf);
+	return ret;
+}
+
+static const struct file_operations pn544_antenna_sleftest_operations = {
+	.open		= pn544_antenna_selftset_open,
+	.read		= pn544_antenna_selftset_read,
+	.write		= pn544_antenna_selftset_write,
+};
+
+//SWP self-test
+static int pn544_swp_selftset_open(struct inode *inode, struct file *file)
+{
+	file->private_data = inode->i_private;
+
+	pn544_printk(NFC_TEST, "--%s: start nfc swp selftest process...--\n", __func__);
+
+	return 0;
+}
+
+static int pn544_swp_selftset_read(struct file *file, __user char *buffer, size_t count,
+			loff_t *ppos)
+{
+	struct pn544_info *info = file->private_data;
+	int ret = 0, copy_size = 0;
+	char buf[64];
+
+	pn544_printk(NFC_TEST, "--%s: count = %Zd--\n", __func__, count);
+
+	/* add *ppos check for cat command from shell to avoid to execute this operation twice
+		(cat command will issue twice because of checking eof) */
+	if (*ppos == 0) {
+		pn544_disable(info);
+		pn544_enable(info, HCI_MODE);
+		PN544_NFC_TEST(swp_self_test, info->i2c_dev, &pn544_test_info);
+		pn544_disable (info);
+
+		pn544_printk(NFC_DEBUGFS, "--%s: test result is [0x%08x]\n",
+			__func__, pn544_test_info.swp_selftest_result.value);
+
+		copy_size = sizeof(buf);
+
+		ret = snprintf(buf, copy_size - ret, "%d,", pn544_test_info.swp_selftest_result.value_byte[0]);
+		ret += snprintf(buf + ret, copy_size - ret, "%d\n", pn544_test_info.swp_selftest_result.value_byte[1]);
+
+		pn544_printk(NFC_DEBUGFS, "--%s: ret = %d, buf(%s)--\n",
+			__func__, ret, buf);
+	}
+
+	return simple_read_from_buffer(buffer, count, ppos, buf, ret);
+}
+
+static const struct file_operations pn544_swp_sleftest_operations = {
+	.open		= pn544_swp_selftset_open,
+	.read		= pn544_swp_selftset_read,
+};
+
+//add for RF certification to switch Tx on/off
+static int pn544_switchTx_open(struct inode *inode, struct file *file)
+{
+	file->private_data = inode->i_private;
+
+	pn544_printk(NFC_TEST, "--%s: start nfc switch Tx on process...--\n", __func__);
+
+	return 0;
+}
+
+static int pn544_switchTx_read(struct file *file, __user char *buffer, size_t count,
+	loff_t *ppos)
+{
+	int ret = 0, copy_size = 0;
+	char buf[64];
+
+	pn544_printk(NFC_TEST, "--%s: count = %Zd--\n", __func__, count);
+
+	/* add *ppos check for cat command from shell to avoid to execute this operation twice
+		(cat command will issue twice because of checking eof) */
+	if (*ppos == 0) {
+		copy_size = sizeof(buf);
+		ret = snprintf(buf, copy_size - ret, "%d\n", pn544_test_info.switch_Tx_onoff);
+		pn544_printk(NFC_DEBUGFS, "--%s: ret = %d, buf(%s)--\n",
+			__func__, ret, buf);
+	}
+
+	return simple_read_from_buffer(buffer, count, ppos, buf, ret);
+}
+
+static ssize_t pn544_switchTx_write(struct file *file,
+	const char __user *buffer, size_t count, loff_t *pos)
+{
+	int ret, value;
+	char *buf = (char *) __get_free_page(GFP_USER);
+	struct pn544_info *info = file->private_data;
+
+	pn544_printk(NFC_TEST, "--%s--\n", __func__);
+
+	if (!buf)
+		return -ENOMEM;
+
+	ret = -EINVAL;
+	if (count >= PAGE_SIZE)
+		goto out;
+
+	ret = -EFAULT;
+	if (copy_from_user(buf, buffer, count))
+		goto out;
+
+	ret = count;
+	buf[count] = '\0';
+
+	value = simple_strtol(buf, NULL, 10) ? 1 : 0;
+	if (value == 1) {
+		pn544_test_info.switch_Tx_onoff = 1;
+		pn544_printk(NFC_TEST, "--%s: switch Tx on...--\n", __func__);
+	} else {
+		pn544_printk(NFC_TEST, "--%s: switch Tx off...--\n", __func__);
+		pn544_test_info.switch_Tx_onoff = 0;
+	}
+
+		pn544_disable(info);
+		pn544_enable(info, HCI_MODE);
+		PN544_NFC_TEST(switch_Tx_only, info->i2c_dev, &pn544_test_info);
+
+ out:
+	free_page((unsigned long)buf);
+	return ret;
+}
+
+static const struct file_operations pn544_switchTx_operations = {
+	.open		= pn544_switchTx_open,
+	.read		= pn544_switchTx_read,
+	.write		= pn544_switchTx_write,
+};
+
+//add for hci TypeA reader on/off
+static int pn544_hci_TypeA_reader_open(struct inode *inode, struct file *file)
+{
+	file->private_data = inode->i_private;
+
+	pn544_printk(NFC_TEST, "--%s: start nfc TypeA reader process...--\n", __func__);
+
+	return 0;
+}
+
+static int pn544_hci_TypeA_reader_read(struct file *file, __user char *buffer, size_t count,
+			loff_t *ppos)
+{
+	struct pn544_info *info = file->private_data;
+	int ret = 0, copy_size = 0;
+	char buf[64];
+
+	pn544_printk(NFC_TEST, "--%s: count = %Zd--\n", __func__, count);
+
+	/* add *ppos check for cat command from shell to avoid to execute this operation twice
+		(cat command will issue twice because of checking eof) */
+	if (*ppos == 0) {
+		pn544_disable(info);
+		pn544_enable(info, HCI_MODE);
+		PN544_NFC_TEST(hci_TypeA_reader, info->i2c_dev, &pn544_test_info);
+		pn544_disable (info);
+
+
+		pn544_printk(NFC_DEBUGFS, "--%s: test result: uid_led[%d], uid[0x%08x 0x%08x]\n",
+			__func__, pn544_test_info.card_data.uid_len,
+			pn544_test_info.card_data.uid[0].value, pn544_test_info.card_data.uid[1].value);
+
+		copy_size = sizeof(buf);
+
+		ret = snprintf(buf, copy_size - ret, "uid len = %x\n", pn544_test_info.card_data.uid_len);
+		ret += snprintf(buf + ret, copy_size - ret, "uid is %x ", pn544_test_info.card_data.uid[0].value_byte[0]);
+		ret += snprintf(buf + ret, copy_size - ret, "%x ", pn544_test_info.card_data.uid[0].value_byte[1]);
+		ret += snprintf(buf + ret, copy_size - ret, "%x ", pn544_test_info.card_data.uid[0].value_byte[2]);
+		ret += snprintf(buf + ret, copy_size - ret, "%x ", pn544_test_info.card_data.uid[0].value_byte[3]);
+		ret += snprintf(buf + ret, copy_size - ret, "%x ", pn544_test_info.card_data.uid[1].value_byte[0]);
+		ret += snprintf(buf + ret, copy_size - ret, "%x ", pn544_test_info.card_data.uid[1].value_byte[1]);
+		ret += snprintf(buf + ret, copy_size - ret, "%x ", pn544_test_info.card_data.uid[1].value_byte[2]);
+		ret += snprintf(buf + ret, copy_size - ret, "%x\n", pn544_test_info.card_data.uid[1].value_byte[3]);
+
+		pn544_printk(NFC_DEBUGFS, "--%s: ret = %d, buf(%s)--\n",
+			__func__, ret, buf);
+	}
+
+	return simple_read_from_buffer(buffer, count, ppos, buf, ret);
+}
+
+static const struct file_operations pn544_TypeA_reader_operations = {
+	.open		= pn544_hci_TypeA_reader_open,
+	.read		= pn544_hci_TypeA_reader_read,
+};
+#endif
+
+//add for debugfs entries
+static void pn544_create_debugfs_entries(struct pn544_info *info)
+{
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
+
+	dent = debugfs_create_dir(PN544_DRIVER_NAME, NULL);
+	if (dent) {
+	//add for self test with HCI command test script
+	#ifdef CONFIG_PN544_TEST
+		debugfs_create_file("read_chip_id", S_IRUGO, dent, info, &pn544_read_chip_id_fops);
+		debugfs_create_file("read_sw_version", S_IRUGO, dent, info, &pn544_read_sw_version_fops);
+		debugfs_create_file("antenna_self_test", S_IRUGO | S_IWUGO, dent, info, &pn544_antenna_sleftest_operations);
+		debugfs_create_file("swp_self_test", S_IRUGO, dent, info, &pn544_swp_sleftest_operations);
+		debugfs_create_file("switch_Tx", S_IWUGO, dent, info, &pn544_switchTx_operations);
+		debugfs_create_file("TypeA_reader", S_IRUGO, dent, info, &pn544_TypeA_reader_operations);
+	#endif
+		debugfs_create_file("host_int_gpio", S_IRUGO | S_IWUGO, dent, info, &pn544_host_int_gpio_fops);
+		debugfs_create_file("enable_gpio", S_IRUGO | S_IWUGO, dent, info, &pn544_enable_gpio_fops);
+		debugfs_create_file("reset_gpio", S_IRUGO | S_IWUGO, dent, info, &pn544_fw_reset_gpio_fops);
+	/* Jen Chang add for check nfc chip is ok or not */
+		debugfs_create_file("dev_i2c_response", S_IRUGO | S_IWUGO, dent, info, &pn544_dev_i2c_response_fops);
+	/* Jen Chang, 20130221 */
+	}
+}
+
+static void pn544_destroy_debugfs_entries(void)
+{
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
+
+	if (dent)
+		debugfs_remove_recursive(dent);
+}
+
+//add for kernel debug level entries
+static void pn544_create_kernel_debuglevel_entries(void)
+{
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
+
+	memset(&PN544_DEBUG_DLL, 0, sizeof(PN544_DEBUG_DLL));
+
+	printk("PN544_DEBUG_DLL(%d)\n", PN544_DEBUG_DLL.debug_level);
+
+	if (kernel_debuglevel_dir != NULL) {
+		debugfs_create_u8("pn544_test_dll", S_IRUGO | S_IWUGO,
+			kernel_debuglevel_dir, (u8 *)(&PN544_DEBUG_DLL.debug_byte[0]));
+		debugfs_create_u8("pn544_info_dll", S_IRUGO | S_IWUGO,
+			kernel_debuglevel_dir, (u8 *)(&PN544_DEBUG_DLL.debug_byte[1]));
+		debugfs_create_u8("pn544_debug_dll", S_IRUGO | S_IWUGO,
+			kernel_debuglevel_dir, (u8 *)(&PN544_DEBUG_DLL.debug_byte[2]));
+	} else {
+		pn544_printk(NFC_CRITICIAL, "smb136 kernel debuglevel dir falied\n");
+	}
+}
+
+static void pn544_destroy_kernel_debuglevel_entries(void)
+{
+	pn544_printk(NFC_DEBUG, "--%s--\n", __func__);
+
+	if (kernel_debuglevel_dir)
+		debugfs_remove_recursive(kernel_debuglevel_dir);
+}
+#else
+static void pn544_create_debugfs_entries(struct pn544_data *info)
+{
+}
+static void pn544_destroy_debugfs_entries(void)
+{
+}
+static void pn544_create_kernel_debuglevel_entries(void)
+{
+}
+static void pn544_destroy_kernel_debuglevel_entries(void)
+{
+}
+#endif
+/* Jen Chang, 20130114 */
 
 static int __devinit pn544_probe(struct i2c_client *client,
 				 const struct i2c_device_id *id)
 {
 	struct pn544_info *info;
 	struct pn544_nfc_platform_data *pdata;
-	int r = 0;
-
-	dev_dbg(&client->dev, "%s\n", __func__);
-	dev_dbg(&client->dev, "IRQ: %d\n", client->irq);
+	int i = 0, r = 0;
+/* Jen Chang add for i2c address */
+	char test_addr = PN544_I2C_ADDR;
+/* Jen Chang, 20121217 */
 
 	/* private data allocation */
 	info = kzalloc(sizeof(struct pn544_info), GFP_KERNEL);
@@ -739,21 +1173,34 @@ static int __devinit pn544_probe(struct i2c_client *client,
 		goto err_buf_alloc;
 	}
 
-	info->regs[0].supply = reg_vdd_io;
-	info->regs[1].supply = reg_vbat;
-	info->regs[2].supply = reg_vsim;
+/* Jen Chang modify for requesting requlator */
+/* Fix me -- We only need to control Vdd_io power source,
+			Vbat can't turn off and Vsim is controlled by nfc driver */
+	info->regs[0] = nfc_regs[0];
+//	info->regs[1] = nfc_regs[1];
+//	info->regs[2] = nfc_regs[2];
+
 	r = regulator_bulk_get(&client->dev, ARRAY_SIZE(info->regs),
 				 info->regs);
 	if (r < 0)
 		goto err_kmalloc;
 
+	r = regulator_bulk_set_voltage(ARRAY_SIZE(info->regs), info->regs);
+	if (r < 0)
+		goto err_kmalloc;
+
+	r = regulator_bulk_enable(ARRAY_SIZE(info->regs), info->regs);
+	if (r < 0)
+		goto err_kmalloc;
+/* Jen Chang, 20130206 */
+
 	info->i2c_dev = client;
-	info->state = PN544_ST_COLD;
-	info->read_irq = PN544_NONE;
 	mutex_init(&info->read_mutex);
 	mutex_init(&info->mutex);
 	init_waitqueue_head(&info->read_wait);
+	spin_lock_init(&info->irq_enabled_lock);
 	i2c_set_clientdata(client, info);
+
 	pdata = client->dev.platform_data;
 	if (!pdata) {
 		dev_err(&client->dev, "No platform data\n");
@@ -773,24 +1220,45 @@ static int __devinit pn544_probe(struct i2c_client *client,
 		goto err_reg;
 	}
 
-	r = request_threaded_irq(client->irq, NULL, pn544_irq_thread_fn,
-				 IRQF_TRIGGER_RISING, PN544_DRIVER_NAME,
-				 info);
-	if (r < 0) {
-		dev_err(&client->dev, "Unable to register IRQ handler\n");
-		goto err_res;
-	}
+/* Jen Chang modify to check i2c response from nfc chip and register pmlog device */
+#ifdef CONFIG_PM_LOG
+	info->pmlog_device = pmlog_register_device(&client->dev);
+#endif
 
-	/* If we don't have the test we don't need the sysfs file */
-	if (pdata->test) {
-		r = device_create_file(&client->dev, &pn544_attr);
-		if (r) {
-			dev_err(&client->dev,
-				"sysfs registration failed, error %d\n", r);
-			goto err_irq;
+//add for reset pn544 power to wait stable
+	pn544_disable(info);
+	pn544_enable(info, HCI_MODE);
+
+//add to check i2c response from nfc chip
+	do {
+		r = i2c_master_send(client, &test_addr, 1);
+		pn544_printk(NFC_PROBE, "%s: (%d) send(0x%x) to pn544, ret(%d)\n",
+			__func__, i, test_addr, r);
+
+		r = i2c_master_recv(client, &dev_i2c_response, 1);
+		pn544_printk(NFC_PROBE, "%s: (%d) recv(0x%x) from pn544, ret(%d)\n",
+			__func__, i, dev_i2c_response, r);
+
+		if (dev_i2c_response == ((test_addr << 1) + 1))
+			break;
+		else {
+			i++;
+			/* delay time range is depended on 0x9C27,0x9c28(AckHostTimeout) and
+				0x9c31,0x9c32(GuardHostTimeout) */
+			usleep_range(200000, 250000);
 		}
-	}
 
+		if (i >= 5) {
+			dev_i2c_response = 0;
+			pn544_printk(NFC_PROBE, "%s: No nfc device exist!!\n", __func__);
+		/* Jen Chang mark it to establish /dev/pn544 device node for nfc force download */
+		//	goto err_res;
+		/* Jen Chang, 20130221 */
+		}
+	} while (i < 5);
+/* Jen Chang, 20130114 */
+
+	pr_info("[NFC]PN544 probe : misc devices setting....\n");
 	info->miscdev.minor = MISC_DYNAMIC_MINOR;
 	info->miscdev.name = PN544_DRIVER_NAME;
 	info->miscdev.fops = &pn544_fops;
@@ -801,15 +1269,75 @@ static int __devinit pn544_probe(struct i2c_client *client,
 		goto err_sysfs;
 	}
 
-	dev_dbg(&client->dev, "%s: info: %p, pdata %p, client %p\n",
-		__func__, info, pdata, client);
+	pr_info("[NFC]PN544 probe : IRQ setting....\n");
+	info->irq_enabled = true;
+	info->irq_gpio = pdata->irq_gpio;
+
+	r = request_irq(client->irq, pn544_dev_irq_handler,
+					IRQF_TRIGGER_HIGH, PN544_DRIVER_NAME, info);
+	if (r < 0) {
+		dev_err(&client->dev, "Unable to register IRQ handler\n");
+		goto err_res;
+	}
+
+	pn544_disable_irq(info);
+
+	/* If we don't have the test we don't need the sysfs file */
+	if (pdata->test) {
+		/* sysfs entries */
+		for (i = 0; i < ARRAY_SIZE(pn544_attr); i++) {
+			r = device_create_file(&client->dev, &pn544_attr[i]);
+		if (r) {
+			dev_err(&client->dev,
+				"sysfs registration failed, error %d\n", r);
+			goto err_irq;
+		}
+	}
+	}
+
+/* Jen Chang add for wake up cpu by reading nfc tag card */
+	wake_lock_init(&info->wake_lock, WAKE_LOCK_SUSPEND, PN544_DRIVER_NAME);
+
+//add for debugfs enteries and kerenl debug level entries
+	pn544_create_debugfs_entries(info);
+	pn544_create_kernel_debuglevel_entries();
+
+	pn544_disable(info);
+	pn544_enable(info, HCI_MODE);
+
+//add for getting chip id
+#ifdef CONFIG_PN544_TEST
+	memset(&pn544_test_info, 0, sizeof(struct chip_test_data_t));
+
+#if 0 //mark it for reducing booting time
+	//add for getting device id with HCI command test script
+	pn544_printk(NFC_TEST, "[NFC_TEST] start nfc version getting...");
+	PN544_NFC_TEST(r_ver, client, &pn544_test_info);
+	pn544_disable (info);
+
+	pn544_printk(NFC_PROBE, "%s success: nfc sw version is %d-%d\n",
+		__func__,
+		pn544_test_info.chip_version.sw_ver.value_byte[1],
+		pn544_test_info.chip_version.sw_ver.value_byte[0]);
+
+	return 0;
+#endif
+#endif
+
+	pn544_disable (info);
+
+	pn544_printk(NFC_PROBE, "%s success!!\n", __func__);
 
 	return 0;
 
 err_sysfs:
-	if (pdata->test)
-		device_remove_file(&client->dev, &pn544_attr);
+	if (pdata->test) {
+		for (i = 0; i < ARRAY_SIZE(pn544_attr); i++)
+			device_remove_file(&client->dev, &pn544_attr[i]);
+	}
 err_irq:
+//add for wake up cpu by reading nfc tag card
+	wake_lock_destroy(&info->wake_lock);
 	free_irq(client->irq, info);
 err_res:
 	if (pdata->free_resources)
@@ -823,17 +1351,28 @@ err_buf_alloc:
 err_info_alloc:
 	return r;
 }
+/* Jen Chang, 20121217 */
 
 static __devexit int pn544_remove(struct i2c_client *client)
 {
 	struct pn544_info *info = i2c_get_clientdata(client);
 	struct pn544_nfc_platform_data *pdata = client->dev.platform_data;
 
-	dev_dbg(&client->dev, "%s\n", __func__);
+	int i;
 
 	misc_deregister(&info->miscdev);
-	if (pdata->test)
-		device_remove_file(&client->dev, &pn544_attr);
+
+	if (pdata->test) {
+		for (i = 0; i < ARRAY_SIZE(pn544_attr); i++)
+			device_remove_file(&client->dev, &pn544_attr[i]);
+	}
+/* Jen Chang add for wake up cpu by reading nfc tag card */
+	wake_lock_destroy(&info->wake_lock);
+
+//add for debugfs entries and kernel debug level entries
+	pn544_destroy_debugfs_entries();
+	pn544_destroy_kernel_debuglevel_entries();
+/* Jen Chang, 20121217 */
 
 	if (info->state != PN544_ST_COLD) {
 		if (pdata->disable)
@@ -847,8 +1386,11 @@ static __devexit int pn544_remove(struct i2c_client *client)
 		pdata->free_resources();
 
 	regulator_bulk_free(ARRAY_SIZE(info->regs), info->regs);
+
 	kfree(info->buf);
 	kfree(info);
+
+	pn544_printk(NFC_PROBE, "%s remove success!\n", __func__);
 
 	return 0;
 }
@@ -869,13 +1411,12 @@ static int __init pn544_init(void)
 {
 	int r;
 
-	pr_debug(DRIVER_DESC ": %s\n", __func__);
-
 	r = i2c_add_driver(&pn544_driver);
 	if (r) {
 		pr_err(PN544_DRIVER_NAME ": driver registration failed\n");
 		return r;
 	}
+	pn544_printk(NFC_PROBE, "%s initialize success!\n", __func__);
 
 	return 0;
 }
@@ -883,7 +1424,7 @@ static int __init pn544_init(void)
 static void __exit pn544_exit(void)
 {
 	i2c_del_driver(&pn544_driver);
-	pr_info(DRIVER_DESC ", Exiting.\n");
+	pn544_printk(NFC_PROBE, "%s exit success!\n", __func__);
 }
 
 module_init(pn544_init);

@@ -69,6 +69,8 @@ VREG_CONSUMERS(L9) = {
 	REGULATOR_SUPPLY("vdd_ana",		"3-004a"),
 	REGULATOR_SUPPLY("vdd",			"3-0024"),
 	REGULATOR_SUPPLY("cam_vana",		"4-001a"),
+       REGULATOR_SUPPLY("cam_vana",		"4-002a"), // sophia wang, 8825 porting
+	REGULATOR_SUPPLY("cam_vana",		"4-0060"), //Eric Liu, OV2675 porting (conflict with flash_adp1650, change from 0x30 to 0x60)
 	REGULATOR_SUPPLY("cam_vana",		"4-006c"),
 	REGULATOR_SUPPLY("cam_vana",		"4-0048"),
 	REGULATOR_SUPPLY("cam_vaf",		"4-001a"),
@@ -76,8 +78,19 @@ VREG_CONSUMERS(L9) = {
 	REGULATOR_SUPPLY("cam_vaf",		"4-0048"),
 	REGULATOR_SUPPLY("cam_vana",            "4-0020"),
 	REGULATOR_SUPPLY("cam_vaf",             "4-0020"),
+	REGULATOR_SUPPLY("cam_vaf",             "4-002a"), // sophia wang, 8825 porting
 	REGULATOR_SUPPLY("vdd",			"12-0018"),
 	REGULATOR_SUPPLY("vdd",			"12-0068"),
+/* Emily Jiang, 20121105, Add for Focaltech FT5316 and Synaptics S3202 TouchScreen { */
+#if defined(CONFIG_TOUCHSCREEN_FOCALTECH_FT5316) || defined(CONFIG_TOUCHSCREEN_SYNAPTICS_S3202)
+	REGULATOR_SUPPLY("touch_avdd",	NULL),
+#endif //CONFIG_TOUCHSCREEN_FOCALTECH_FT5316
+/* } Emily Jiang, 20121105, Add for Focaltech FT5316 and Synaptics S3202 TouchScreen */
+/* Boston CR #:XXX, WH Lee, 20121128 */
+#if defined(CONFIG_SENSORS_BMA250) || defined(CONFIG_SENSORS_BMM050) || defined(CONFIG_SENSORS_L3GD20) || defined(CONFIG_SENSORS_TSL2772)
+	REGULATOR_SUPPLY("sensors_l9",	NULL),
+#endif
+/* WH Lee, 20121128 */
 };
 VREG_CONSUMERS(L10) = {
 	REGULATOR_SUPPLY("8038_l10",		NULL),
@@ -97,9 +110,19 @@ VREG_CONSUMERS(L11) = {
 	REGULATOR_SUPPLY("CDC_VDDA_RX",		"sitar1p1-slim"),
 	REGULATOR_SUPPLY("vddp",		"0-0048"),
 	REGULATOR_SUPPLY("mhl_iovcc18",		"0-0039"),
+/* Jen Chang add for pn544 nfc driver VEN power source */
+#ifdef CONFIG_PN544_NFC
+	REGULATOR_SUPPLY("NFC_VEN",			"0-0028"),
+#endif
+/* Jen Chang, 20121217 */
+
+//Sophia Wang++, 20130702
+	REGULATOR_SUPPLY("cam_vio_adp1650_l11",			"0-0030"),
+//Sophia Wang --
 };
 VREG_CONSUMERS(L12) = {
 	REGULATOR_SUPPLY("8038_l12",		NULL),
+	REGULATOR_SUPPLY("cam_vdig",             "4-002a"), // sophia wang, 8825 porting	
 	REGULATOR_SUPPLY("cam_vdig",		"4-001a"),
 	REGULATOR_SUPPLY("cam_vdig",		"4-006c"),
 	REGULATOR_SUPPLY("cam_vdig",		"4-0048"),
@@ -114,6 +137,11 @@ VREG_CONSUMERS(L14) = {
 };
 VREG_CONSUMERS(L15) = {
 	REGULATOR_SUPPLY("8038_l15",		NULL),
+/* Jen Chang add for pn544 nfc driver PMVCC power source */
+#ifdef CONFIG_PN544_NFC
+	REGULATOR_SUPPLY("NFC_PMVCC",		"0-0028"),
+#endif
+/* Jen Chang, 20121228 */
 };
 VREG_CONSUMERS(L16) = {
 	REGULATOR_SUPPLY("8038_l16",		NULL),
@@ -198,9 +226,12 @@ VREG_CONSUMERS(S6) = {
 VREG_CONSUMERS(LVS1) = {
 	REGULATOR_SUPPLY("8038_lvs1",		NULL),
 	REGULATOR_SUPPLY("cam_vio",		"4-001a"),
+       REGULATOR_SUPPLY("cam_vio",		"4-002a"), // sophia wang,20121112 ov8825 porting
+	REGULATOR_SUPPLY("cam_vio",		"4-0060"), //Eric Liu, OV2675 porting (conflict with flash_adp1650, change from 0x30 to 0x60)
 	REGULATOR_SUPPLY("cam_vio",		"4-006c"),
 	REGULATOR_SUPPLY("cam_vio",		"4-0048"),
 	REGULATOR_SUPPLY("cam_vio",             "4-0020"),
+	REGULATOR_SUPPLY("cam_vio_adp1650",     NULL), // sophia wang, for adp1650
 };
 VREG_CONSUMERS(LVS2) = {
 	REGULATOR_SUPPLY("8038_lvs2",		NULL),
@@ -209,6 +240,16 @@ VREG_CONSUMERS(LVS2) = {
 	REGULATOR_SUPPLY("vcc_i2c",		"0-0048"),
 	REGULATOR_SUPPLY("vddio",		"12-0018"),
 	REGULATOR_SUPPLY("vlogic",		"12-0068"),
+/* Emily Jiang, 20121105, Add for Focaltech FT5316 and Synaptics S3202 TouchScreen { */
+#if defined(CONFIG_TOUCHSCREEN_FOCALTECH_FT5316) || defined(CONFIG_TOUCHSCREEN_SYNAPTICS_S3202)
+	REGULATOR_SUPPLY("touch_i2c",		NULL),
+#endif //CONFIG_TOUCHSCREEN_FOCALTECH_FT5316
+/* } Emily Jiang, 20121105, Add for Focaltech FT5316 and Synaptics S3202 TouchScreen */
+/* Boston CR #:XXX, WH Lee, 20121128 */
+#if defined(CONFIG_SENSORS_BMA250) || defined(CONFIG_SENSORS_BMM050) || defined(CONFIG_SENSORS_L3GD20) || defined(CONFIG_SENSORS_TSL2772)
+	REGULATOR_SUPPLY("sensors_lvs2",	NULL),
+#endif
+/* WH Lee, 20121128 */
 };
 VREG_CONSUMERS(EXT_5V) = {
 	REGULATOR_SUPPLY("ext_5v",		NULL),
@@ -488,9 +529,10 @@ static struct rpm_regulator_init_data
 msm8930_rpm_regulator_init_data[] __devinitdata = {
 	/*	ID a_on pd ss min_uV   max_uV  supply sys_uA  freq  fm  ss_fm */
 	RPM_SMPS(S1, 0, 1, 1,  500000, 1150000, NULL, 100000, 4p80, AUTO, LPM),
-	RPM_SMPS(S2, 1, 1, 1, 1400000, 1400000, NULL, 100000, 1p60, AUTO, LPM),
+//	RPM_SMPS(S2, 1, 1, 1, 1400000, 1400000, NULL, 100000, 1p60, AUTO, LPM),
+	RPM_SMPS(S2, 1, 1, 1, 1500000, 1500000, NULL, 100000, 1p60, AUTO, LPM),
 	RPM_SMPS(S3, 0, 1, 1, 1150000, 1150000, NULL, 100000, 3p20, AUTO, AUTO),
-	RPM_SMPS(S4, 1, 1, 1, 1950000, 2200000, NULL, 100000, 1p60, AUTO, LPM),
+	RPM_SMPS(S4, 1, 1, 1, 1950000, 2200000, NULL, 100000, 1p60, HPM, LPM), //Terry Cheng, 20130408, Request S4 as HPM mode to fix abnormal reboot when switching camera and using flash light
 
 	/*	ID     a_on pd ss min_uV   max_uV  supply  sys_uA init_ip */
 	RPM_LDO(L1,	 0, 1, 0, 1300000, 1300000, "8038_s2", 0, 0),
@@ -501,22 +543,23 @@ msm8930_rpm_regulator_init_data[] __devinitdata = {
 	RPM_LDO(L6,	 0, 1, 0, 2950000, 2950000, NULL,      0, 0),
 	RPM_LDO(L7,	 0, 1, 0, 2050000, 2050000, "8038_s4", 0, 0),
 	RPM_LDO(L8,	 0, 1, 0, 2800000, 2800000, NULL,      0, 0),
-	RPM_LDO(L9,	 0, 1, 0, 2850000, 2850000, NULL,      0, 0),
-	RPM_LDO(L10,	 0, 1, 0, 2900000, 2900000, NULL,      0, 0),
-	RPM_LDO(L11,	 1, 1, 0, 1800000, 1800000, "8038_s4", 10000, 10000),
-	RPM_LDO(L12,	 0, 1, 0, 1200000, 1200000, "8038_s2", 0, 0),
-	RPM_LDO(L13,	 0, 0, 0, 2220000, 2220000, NULL,      0, 0),
-	RPM_LDO(L14,	 0, 1, 0, 1800000, 1800000, NULL,      0, 0),
-	RPM_LDO(L15,	 0, 1, 0, 1800000, 2950000, NULL,      0, 0),
-	RPM_LDO(L17,	 0, 1, 0, 1800000, 2950000, NULL,      0, 0),
-	RPM_LDO(L18,	 0, 1, 0, 1800000, 1800000, NULL,      0, 0),
-	RPM_LDO(L20,	 1, 1, 0, 1250000, 1250000, "8038_s2", 10000, 10000),
-	RPM_LDO(L21,	 0, 1, 0, 1900000, 1900000, "8038_s4", 0, 0),
-	RPM_LDO(L22,	 1, 1, 0, 1850000, 2950000, NULL,      10000, 10000),
-	RPM_LDO(L23,	 1, 1, 1, 1800000, 1800000, "8038_s4", 0, 0),
-	RPM_LDO(L24,	 0, 1, 1,  500000, 1150000, "8038_s2", 10000, 10000),
-	RPM_LDO(L25,	 0, 0, 0, 1740000, 1740000, "8038_l13", 0, 0),
-	RPM_LDO(L26,     1, 1, 0, 1050000, 1050000, "8038_s2", 10000, 10000),
+	RPM_LDO(L9,	 0, 1, 0, 2800000, 2850000, NULL,      0, 0), // sophia wang, 8825 porting
+	RPM_LDO(L10, 0, 1, 0, 2900000, 2900000, NULL,      0, 0),
+	RPM_LDO(L11, 1, 1, 0, 1800000, 1800000, "8038_s4", 10000, 10000),
+//	RPM_LDO(L12, 0, 1, 0, 1200000, 1200000, "8038_s2", 0, 0),
+	RPM_LDO(L12, 0, 1, 0, 1200000, 1500000, "8038_s2", 0, 0), //Eric Liu, IMX091 use 1.2V, OV8825 (EVT1) use 1.5V
+	RPM_LDO(L13, 0, 0, 0, 2220000, 2220000, NULL,      0, 0),
+	RPM_LDO(L14, 0, 1, 0, 1800000, 1800000, NULL,      0, 0),
+	RPM_LDO(L15, 0, 1, 0, 1800000, 2950000, NULL,      0, 0),
+	RPM_LDO(L17, 0, 1, 0, 1800000, 2950000, NULL,      0, 0),
+	RPM_LDO(L18, 0, 1, 0, 1800000, 1800000, NULL,      0, 0),
+	RPM_LDO(L20, 1, 1, 0, 1250000, 1250000, "8038_s2", 10000, 10000),
+	RPM_LDO(L21, 0, 1, 0, 1900000, 1900000, "8038_s4", 0, 0),
+	RPM_LDO(L22, 0, 1, 0, 1850000, 2950000, NULL,      10000, 10000), //Emily Jiang, 20121211, turn off regulator when unuse
+	RPM_LDO(L23, 1, 1, 1, 1800000, 1800000, "8038_s4", 0, 0),
+	RPM_LDO(L24, 0, 1, 1,  500000, 1150000, "8038_s2", 10000, 10000),
+	RPM_LDO(L25, 0, 0, 0, 1740000, 1740000, "8038_l13", 0, 0),
+	RPM_LDO(L26, 1, 1, 0, 1050000, 1050000, "8038_s2", 10000, 10000),	// Okpa. Build special load for DDR test, change min_uV to 750000, max_uV to 1500000.
 
 	/*	ID     a_on pd ss		    supply */
 	RPM_VS(LVS1,	 0, 1, 0,		    "8038_l11"),

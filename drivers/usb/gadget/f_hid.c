@@ -177,8 +177,7 @@ static void f_hidg_req_complete(struct usb_ep *ep, struct usb_request *req)
 	struct f_hidg *hidg = (struct f_hidg *)ep->driver_data;
 
 	if (req->status != 0) {
-		ERROR(hidg->func.config->cdev,
-			"End Point Request ERROR: %d\n", req->status);
+		printk("hid::%s f_hid End Point Request ERROR: %d\n",__func__,req->status);
 	}
 
 	hidg->write_pending = 0;
@@ -215,8 +214,7 @@ static ssize_t f_hidg_write(struct file *file, const char __user *buffer,
 	status = copy_from_user(hidg->req->buf, buffer, count);
 
 	if (status != 0) {
-		ERROR(hidg->func.config->cdev,
-			"copy_from_user error\n");
+		printk("hid::%s copy form user error\n",__func__);
 		mutex_unlock(&hidg->lock);
 		return -EINVAL;
 	}
@@ -230,8 +228,7 @@ static ssize_t f_hidg_write(struct file *file, const char __user *buffer,
 
 	status = usb_ep_queue(hidg->in_ep, hidg->req, GFP_ATOMIC);
 	if (status < 0) {
-		ERROR(hidg->func.config->cdev,
-			"usb_ep_queue error on int endpoint %zd\n", status);
+		printk("hid::%s usb_ep_queue error on int endpoint %zd\n",__func__,status);
 		hidg->write_pending = 0;
 		wake_up(&hidg->write_queue);
 	} else {
@@ -287,7 +284,7 @@ static void hidg_set_report_complete(struct usb_ep *ep, struct usb_request *req)
 	struct f_hidg *hidg = (struct f_hidg *)req->context;
 
 	if (req->status != 0 || req->buf == NULL || req->actual == 0) {
-		ERROR(hidg->func.config->cdev, "%s FAILED\n", __func__);
+		//ERROR(hidg->func.config->cdev, "%s FAILED\n", __func__);
 		return;
 	}
 
@@ -396,7 +393,8 @@ respond:
 	req->length = length;
 	status = usb_ep_queue(cdev->gadget->ep0, req, GFP_ATOMIC);
 	if (status < 0)
-		ERROR(cdev, "usb_ep_queue error on ep0 %d\n", value);
+		printk("hid::%s usb_ep_queue error on ep0 %d\n",__func__,value);
+		//ERROR(cdev, "usb_ep_queue error on ep0 %d\n", value);
 	return status;
 }
 
@@ -410,7 +408,7 @@ static void hidg_disable(struct usb_function *f)
 
 static int hidg_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 {
-	struct usb_composite_dev		*cdev = f->config->cdev;
+	//struct usb_composite_dev		*cdev = f->config->cdev;
 	struct f_hidg				*hidg = func_to_hidg(f);
 	int status = 0;
 
@@ -424,12 +422,14 @@ static int hidg_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		status = config_ep_by_speed(f->config->cdev->gadget, f,
 					    hidg->in_ep);
 		if (status) {
-			ERROR(cdev, "config_ep_by_speed FAILED!\n");
+			printk("hid::%s config_ep_by_speed failed\n",__func__);
+			//ERROR(cdev, "config_ep_by_speed FAILED!\n");
 			goto fail;
 		}
 		status = usb_ep_enable(hidg->in_ep);
 		if (status < 0) {
-			ERROR(cdev, "Enable endpoint FAILED!\n");
+			printk("hid::%s enable endpoint failed!!\n",__func__);
+			//ERROR(cdev, "Enable endpoint FAILED!\n");
 			goto fail;
 		}
 		hidg->in_ep->driver_data = hidg;
@@ -448,7 +448,7 @@ const struct file_operations f_hidg_fops = {
 	.llseek		= noop_llseek,
 };
 
-static int __init hidg_bind(struct usb_configuration *c, struct usb_function *f)
+static int hidg_bind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct usb_ep		*ep;
 	struct f_hidg		*hidg = func_to_hidg(f);
@@ -522,7 +522,8 @@ static int __init hidg_bind(struct usb_configuration *c, struct usb_function *f)
 	return 0;
 
 fail:
-	ERROR(f->config->cdev, "hidg_bind FAILED\n");
+	printk("hid::%s hidg_bind failed\n",__func__);
+	//ERROR(f->config->cdev, "hidg_bind FAILED\n");
 	if (hidg->req != NULL) {
 		kfree(hidg->req->buf);
 		if (hidg->in_ep != NULL)
@@ -580,7 +581,7 @@ static struct usb_gadget_strings *ct_func_strings[] = {
 /*-------------------------------------------------------------------------*/
 /*                             usb_configuration                           */
 
-int __init hidg_bind_config(struct usb_configuration *c,
+int hidg_bind_config(struct usb_configuration *c,
 			    struct hidg_func_descriptor *fdesc, int index)
 {
 	struct f_hidg *hidg;
@@ -627,11 +628,11 @@ int __init hidg_bind_config(struct usb_configuration *c,
 	status = usb_add_function(c, &hidg->func);
 	if (status)
 		kfree(hidg);
-
+	printk("hid::%s status = %d\n",__func__,status);
 	return status;
 }
 
-int __init ghid_setup(struct usb_gadget *g, int count)
+int ghid_setup(struct usb_gadget *g, int count)
 {
 	int status;
 	dev_t dev;

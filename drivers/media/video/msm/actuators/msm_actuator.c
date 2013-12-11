@@ -13,6 +13,28 @@
 #include <linux/module.h>
 #include "msm_actuator.h"
 
+//Eric Liu+, for IMX091
+#define MSG2(format, arg...)  printk(KERN_INFO "[CAM]" format "\n", ## arg)
+/*
+#ifdef CDBG
+#undef CDBG
+#endif
+#define CDBG(format, arg...)  printk(KERN_INFO "[CAM]" format, ## arg)
+*/
+
+//for IMX091 Seattle
+#define RING_CTRL_ENA_BIT 0x04
+static const struct reg_settings_t vcm_init_regs[] = {
+    {0x01, 0x01}, //bit0 set 1, reset IC
+    {0x02, 0x00/*0x02*//*0x00*/},
+    {0x03, 0xAB/*0xFA*//*0xFF*//*0x80*/},
+    {0x04, /*0x04*/0x00}, //RING_CTRL_ENA_BIT: enable the RING_CTRL
+    {0x05, 0x00},
+    {0x06, 0x00},
+    {0x07, 0x78/*0x10*/},
+};
+//Eric Liu-
+
 static struct msm_actuator_ctrl_t msm_actuator_t;
 static struct msm_actuator msm_vcm_actuator_table;
 static struct msm_actuator msm_piezo_actuator_table;
@@ -48,6 +70,62 @@ static int32_t msm_actuator_piezo_set_default_focus(
 	return rc;
 }
 
+// sophia wang++
+static int32_t msm_actuator_parse_ov8825_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
+	int16_t next_lens_position, uint32_t hw_params, uint16_t delay)
+{
+
+	struct msm_actuator_reg_params_t *write_arr = a_ctrl->reg_tbl;
+	uint32_t hw_dword = hw_params;
+	uint16_t i2c_byte1 = 0, i2c_byte2 = 0;
+	uint16_t value = 0;
+	uint32_t size = a_ctrl->reg_tbl_size, i = 0;
+	int32_t rc = 0;
+	struct msm_camera_i2c_reg_tbl *i2c_tbl = a_ctrl->i2c_reg_tbl;
+	uint8_t hw_reg_write = 1;
+	CDBG("%s: IN\n", __func__);
+	if (a_ctrl->curr_hwparams == hw_params)
+		hw_reg_write = 0;
+
+	for (i = 0; i < size; i++) {
+
+       	if(i ==0) //lsb
+       	{
+			 value =( (next_lens_position & 0xF) <<
+	              	write_arr[i].data_shift) |
+				((hw_dword & write_arr[i].hw_mask) >>
+				write_arr[i].hw_shift);
+
+			        delay = 0;
+       	}else if ( i==1) //msb
+       	{
+
+			value = ( (next_lens_position & 0x3F0) >> write_arr[i].data_shift);
+
+       	}
+       	else
+        	{
+			printk("%s, i==%d\n", __func__, i);
+       	}
+
+		i2c_byte1 = write_arr[i].reg_addr; // address
+		i2c_byte2 = value; // for i==0, lsb, i==1 msb
+
+		i2c_tbl[a_ctrl->i2c_tbl_index].reg_addr = i2c_byte1;
+		i2c_tbl[a_ctrl->i2c_tbl_index].reg_data = i2c_byte2;
+		i2c_tbl[a_ctrl->i2c_tbl_index].delay = delay;
+		a_ctrl->i2c_tbl_index++;
+
+ //    		pr_err("%s:i =%d,  i2c_byte1:0x%x, i2c_byte2:0x%x, next_lens_position:0x%x\n", __func__,i, i2c_byte1, i2c_byte2, next_lens_position);
+	}
+	
+	CDBG("%s: OUT\n", __func__);
+	if (rc == 0)
+		a_ctrl->curr_hwparams = hw_params;
+	return rc;
+}
+// sophia wang--
+
 static int32_t msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 	int16_t next_lens_position, uint32_t hw_params, uint16_t delay)
 {
@@ -60,14 +138,28 @@ static int32_t msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 	struct msm_camera_i2c_reg_tbl *i2c_tbl = a_ctrl->i2c_reg_tbl;
 	uint8_t hw_reg_write = 1;
 	CDBG("%s: IN\n", __func__);
+
+	//Eric Liu+, for IMX091 Seattle
+	value = (uint16_t) next_lens_position;
+	value &= 0x03FF;
+	if (vcm_init_regs[3].reg_data & RING_CTRL_ENA_BIT) {
+		value |= 0x0400;  //Enable the RING_CTL
+	}
+	//Eric Liu-
+
 	if (a_ctrl->curr_hwparams == hw_params)
 		hw_reg_write = 0;
 	for (i = 0; i < size; i++) {
 		if (write_arr[i].reg_write_type == MSM_ACTUATOR_WRITE_DAC) {
+
+			//Eric Liu+, for IMX091 Seattle
+			#if 0
 			value = (next_lens_position <<
 				write_arr[i].data_shift) |
 				((hw_dword & write_arr[i].hw_mask) >>
 				write_arr[i].hw_shift);
+			#endif
+			//Eric Liu-
 
 			if (write_arr[i].reg_addr != 0xFFFF) {
 				i2c_byte1 = write_arr[i].reg_addr;
@@ -512,6 +604,18 @@ static int32_t msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl,
 	a_ctrl->curr_step_pos = 0;
 	a_ctrl->curr_region_index = 0;
 
+  //Eric Liu+, for IMX091 Seattle
+  if(a_ctrl->i2c_client.client->addr == 0x18) //actuator addr: IMX091 Seattle=0x18, OV8825=0x15
+  {
+    MSG2("%s, IMX091 write default reg ver 1",__func__);
+    for (i=0; i<ARRAY_SIZE(vcm_init_regs); i++)
+    {
+      msm_camera_i2c_write(&a_ctrl->i2c_client,
+        vcm_init_regs[i].reg_addr, vcm_init_regs[i].reg_data, MSM_CAMERA_I2C_BYTE_DATA);
+    }
+  }
+  //Eric Liu-
+
 	return rc;
 }
 
@@ -583,6 +687,16 @@ static int32_t msm_actuator_i2c_probe(
 		act_ctrl_t->act_v4l2_subdev_ops);
 
 	CDBG("%s succeeded\n", __func__);
+
+  //Eric Liu+, for IMX091 Seattle
+  MSG2("%s, addr=0x%02X",__func__,client->addr);  //actuator addr: IMX091 Seattle=0x18, OV8825=0x15
+  if(client->addr == 0x18)
+  {
+    MSG2("%s, IMX091 use msm_actuator_parse_i2c_params",__func__);
+    msm_vcm_actuator_table.func_tbl.actuator_parse_i2c_params = msm_actuator_parse_i2c_params;
+  }
+  //Eric Liu-
+
 	return rc;
 
 probe_failure:
@@ -688,7 +802,8 @@ static struct msm_actuator msm_vcm_actuator_table = {
 		.actuator_write_focus = msm_actuator_write_focus,
 		.actuator_set_default_focus = msm_actuator_set_default_focus,
 		.actuator_init_focus = msm_actuator_init_focus,
-		.actuator_parse_i2c_params = msm_actuator_parse_i2c_params,
+		//.actuator_parse_i2c_params = msm_actuator_parse_i2c_params,
+		.actuator_parse_i2c_params = msm_actuator_parse_ov8825_i2c_params,  // sophia wang
 	},
 };
 

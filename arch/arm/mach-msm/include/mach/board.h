@@ -213,6 +213,7 @@ enum msm_camera_vreg_name_t {
 	CAM_VIO,
 	CAM_VANA,
 	CAM_VAF,
+	CAM_VANA_EXT, //Eric Liu, after EVT0, boston use gpio 35 to control external VANA
 };
 
 struct msm_camera_sensor_platform_info {
@@ -233,6 +234,7 @@ enum msm_camera_actuator_name {
 	MSM_ACTUATOR_MAIN_CAM_3,
 	MSM_ACTUATOR_MAIN_CAM_4,
 	MSM_ACTUATOR_MAIN_CAM_5,
+	MSM_ACTUATOR_MAIN_CAM_OV8825_TRULY,// sophia wang 20121205
 	MSM_ACTUATOR_WEB_CAM_0,
 	MSM_ACTUATOR_WEB_CAM_1,
 	MSM_ACTUATOR_WEB_CAM_2,
@@ -611,5 +613,15 @@ void msm_snddev_tx_route_deconfig(void);
 
 extern unsigned int msm_shared_ram_phys; /* defined in arch/arm/mach-msm/io.c */
 
+#ifdef CONFIG_POWEROFF_CHARGING
+enum ANDROIDBOOTMODE  {
+    ANDROIDBOOTMODE_NORMAL,
+    ANDROIDBOOTMODE_RECOVERY,
+    ANDROIDBOOTMODE_SDRECOVERY,
+    ANDROIDBOOTMODE_FOTARECOVERY,
+    ANDROIDBOOTMODE_BOOTOFFCHARGE,
+    ANDROIDBOOTMODE_MAX,
+};
+#endif
 
 #endif

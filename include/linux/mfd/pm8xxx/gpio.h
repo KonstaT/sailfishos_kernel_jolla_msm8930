@@ -159,4 +159,17 @@ static inline int pm8xxx_gpio_config(int gpio, struct pm_gpio *param)
 }
 #endif
 
+/* Terry cheng, 20110829, Implement GPIO debug fs {*/
+#define PMIC_GPIO_PIN(gpio_cfg)    		(((gpio_cfg) >>  17) & 0x3f)
+#define PMIC_GPIO_DIR(gpio_cfg)    		(((gpio_cfg) >> 0) & 0x3)
+#define PMIC_GPIO_OUT_BUF(gpio_cfg)    	(((gpio_cfg) >> 2) & 0x1)
+#define PMIC_GPIO_OUT_VAL(gpio_cfg)    	(((gpio_cfg) >> 3) & 0x1)
+#define PMIC_GPIO_PULL(gpio_cfg)   		(((gpio_cfg) >> 4) & 0x7)
+#define PMIC_GPIO_VIN(gpio_cfg)   		(((gpio_cfg) >> 7) & 0x7)
+#define PMIC_GPIO_DRVSTR(gpio_cfg) 		(((gpio_cfg) >> 10) & 0x3)
+#define PMIC_GPIO_FUNC(gpio_cfg)   		(((gpio_cfg) >> 12) & 0x7)
+#define PMIC_GPIO_INV(gpio_cfg)   		(((gpio_cfg) >> 15) & 0x1)
+#define PMIC_GPIO_DIS(gpio_cfg)   		(((gpio_cfg) >> 16) & 0x1)
+/* }Terry cheng, 20110829, Implement GPIO debug fs  */
+
 #endif

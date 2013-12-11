@@ -102,6 +102,11 @@ struct adreno_device {
 	unsigned int gpulist_index;
 	struct ocmem_buf *ocmem_hdl;
 	unsigned int ocmem_base;
+	struct kgsl_memdesc scratch_quad_vertices_restore;
+	struct kgsl_memdesc scratch_pad;
+	struct kgsl_memdesc scratch_cmd;
+	unsigned int scratch_ib[3];
+	bool on_resume_issueib;
 };
 
 struct adreno_gpudev {

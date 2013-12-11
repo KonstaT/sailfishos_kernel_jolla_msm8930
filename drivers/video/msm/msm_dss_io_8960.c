@@ -604,6 +604,21 @@ void cont_splash_clk_ctrl(int enable)
 	}
 }
 
+void mipi_dsi_clk_ctrl_4probe(int enable, int esc_byte_ratio_probe)
+{
+	// 20130319 Jackie, set the dsi1_byte_clk/dsi1_esc_clk clock rate here.
+	// Avoid to prepare dsi1_byte_clk/dsi1_esc_clk warning when 1st time call mipi_dsi_on.
+	if (enable)
+	{
+		if (clk_set_rate(dsi_byte_div_clk, 1) < 0)
+			pr_err("%s: dsi_byte_div_clk - "
+				"clk_set_rate failed\n", __func__);
+		if (clk_set_rate(dsi_esc_clk, esc_byte_ratio_probe) < 0)
+			pr_err("%s: dsi_esc_clk - "
+				"clk_set_rate failed\n", __func__);
+	}
+}
+
 void mipi_dsi_prepare_clocks(void)
 {
 	clk_prepare(amp_pclk);

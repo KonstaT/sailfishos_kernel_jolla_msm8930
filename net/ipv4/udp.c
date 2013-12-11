@@ -275,6 +275,10 @@ scan_primary_hash:
 			goto fail_unlock;
 	}
 found:
+	/* Bright Lee, 20120323, socket port monitor for modem { */
+	update_socket_port_status (SOCK_DGRAM, snum, true);
+	/* } Bright Lee, 20120323 */
+
 	inet_sk(sk)->inet_num = snum;
 	udp_sk(sk)->udp_port_hash = snum;
 	udp_sk(sk)->udp_portaddr_hash ^= snum;
@@ -1287,6 +1291,9 @@ EXPORT_SYMBOL(udp_disconnect);
 
 void udp_lib_unhash(struct sock *sk)
 {
+	/* Bright Lee, 20120323, socket port monitor for modem { */
+	update_socket_port_status (SOCK_DGRAM, inet_sk(sk)->inet_num, false);
+	/* } Bright Lee, 20120323 */
 	if (sk_hashed(sk)) {
 		struct udp_table *udptable = sk->sk_prot->h.udp_table;
 		struct udp_hslot *hslot, *hslot2;

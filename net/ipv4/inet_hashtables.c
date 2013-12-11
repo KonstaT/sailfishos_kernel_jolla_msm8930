@@ -23,6 +23,7 @@
 #include <net/inet_hashtables.h>
 #include <net/secure_seq.h>
 #include <net/ip.h>
+#include <linux/inet.h>
 
 /*
  * Allocate and initialize a new local port bind bucket.
@@ -62,6 +63,9 @@ void inet_bind_hash(struct sock *sk, struct inet_bind_bucket *tb,
 		    const unsigned short snum)
 {
 	struct inet_hashinfo *hashinfo = sk->sk_prot->h.hashinfo;
+	/* Bright Lee, 20120323, socket port monitor for modem { */
+	update_socket_port_status(SOCK_STREAM, snum, true);
+	/* } Bright Lee, 20120323 */
 
 	atomic_inc(&hashinfo->bsockets);
 
@@ -88,6 +92,11 @@ static void __inet_put_port(struct sock *sk)
 	tb = inet_csk(sk)->icsk_bind_hash;
 	__sk_del_bind_node(sk);
 	tb->num_owners--;
+	/* Bright Lee, 20120323, socket port monitor for modem { */
+	if (tb->num_owners == 0) {
+		update_socket_port_status(SOCK_STREAM, inet_sk(sk)->inet_num, false);
+	}
+	/* } Bright Lee, 20120323 */
 	inet_csk(sk)->icsk_bind_hash = NULL;
 	inet_sk(sk)->inet_num = 0;
 	inet_bind_bucket_destroy(hashinfo->bind_bucket_cachep, tb);

@@ -27,6 +27,20 @@
 #include <mach/msm_iomap.h>
 #include "rpm_stats.h"
 
+/* Terry Cheng, Dump rpm stats to bufer for pm log {*/
+#define RPM_SHARE_DATA_PHY 	0x10B180
+/* }Terry Cheng, Dump rpm stats to bufer for pm log */
+
+#ifdef CONFIG_PM_LOG
+struct msm_rpmstats_platform_data *msm_rpmstats_pdata;
+struct msm_rpmstats_private_data *msm_rpmstats_prvdata;
+
+/* Terry Cheng, 20121130, Fix get wrong rpm sleep time stats {*/
+unsigned long rpm_vdd_min_time = 0;
+unsigned long rpm_vdd_xo_off_time = 0;
+/* }Terry Cheng, 20121130, Fix get wrong rpm sleep time stats */
+
+#endif	//CONFIG_PM_LOG
 enum {
 	ID_COUNTER,
 	ID_ACCUM_TIME_SCLK,
@@ -107,8 +121,16 @@ static int msm_rpmstats_copy_stats(struct msm_rpmstats_private_data *pdata)
 						pdata->read_idx, 2);
 
 	if (record.id == ID_ACCUM_TIME_SCLK) {
-		usec = record.val * USEC_PER_SEC;
+		//Terry Cheng , 20121105, Fix save wrong value issue
+		usec = (uint64_t)record.val * (uint64_t)USEC_PER_SEC;		
 		do_div(usec, SCLK_HZ);
+		pr_info("usec = %llu, record.val = %u\n", usec, record.val);
+		/* Terry Cheng, 20121130, Fix get wrong rpm sleep time stats {*/
+		if(!strncmp(record.name, "xo shutdown", 11))
+			rpm_vdd_xo_off_time = record.val;
+		else if (!strncmp(record.name, "vdd min", 7))
+			rpm_vdd_min_time = record.val;
+		/* } Terry Cheng, 20121130, Fix get wrong rpm sleep time stats */
 	}  else
 		usec = (unsigned long)record.val;
 
@@ -121,6 +143,142 @@ static int msm_rpmstats_copy_stats(struct msm_rpmstats_private_data *pdata)
 			usec);
 }
 
+/* Terry Cheng, Dump rpm stats to bufer for pm log {*/
+//RPM log Structucture 
+/*
+4 bytes: 			Magic number
+4 bytes: 			size
+4 bytes: 			read flag
+(size -7) bytes: 	data 
+4 bytes:			Magic number
+
+Retun: number of bytes need to save, including magic number
+*/
+#ifdef CONFIG_PM_LOG
+int msm_rpmstats_dump(char *buffer, int bufer_size)
+{
+
+	void __iomem *rpm_pm_log_reg_base;
+	uint32_t value;
+	uint32_t size;
+	static int count = 0;
+
+	if(!buffer)
+		return 0;
+	if(!bufer_size)
+		return 0;
+
+	//First map magic number and size
+	rpm_pm_log_reg_base =  ioremap(RPM_SHARE_DATA_PHY, 2*sizeof(uint32_t));	
+	if(!rpm_pm_log_reg_base)
+	{
+		pr_err("ioremap fail\n");
+		return 0;
+	}	
+	value = readl_relaxed(rpm_pm_log_reg_base);
+	if (value != 0x12345678)
+	{
+		pr_err("Wrong magic number");
+		return 0;
+	}	
+	size = readl_relaxed(rpm_pm_log_reg_base+4);
+	iounmap(rpm_pm_log_reg_base);
+	rpm_pm_log_reg_base = NULL;
+	if(size > bufer_size){	
+		pr_err("buffer size is too small, bufer_size = %d\n", bufer_size);
+		return 0;
+	}	
+	mb();
+	//Remap again
+	rpm_pm_log_reg_base =  ioremap(RPM_SHARE_DATA_PHY, size+4);	//one more 4 byte, magic number
+
+	/* Terry Cheng, 20121105,  Notify RPM update the stats { */
+	//Write read flag to notify RPM update the stats
+	writel_relaxed(0x1, rpm_pm_log_reg_base+8);
+	while (readl_relaxed(rpm_pm_log_reg_base+8) == 2)
+	{
+		msleep(10);
+		if(++count > 10){
+			pr_err("read flasg = %d, count = %d\n", readl_relaxed(rpm_pm_log_reg_base+8), count);
+			count = 0;
+			break;
+		}	
+	}
+	/* } Terry Cheng, 20121105,  Notify RPM update the stats  */
+	if(rpm_pm_log_reg_base)
+	{
+		int i = 0;
+		int len = size+4;	//one more 4 byte, magic number
+		int index = 0;
+		uint32_t data = 0;
+
+		for (i = 0;  i < len; )
+		{
+			data = readl_relaxed(rpm_pm_log_reg_base + i);	//Needn't read read flag
+			memcpy(buffer+index, &data, sizeof(data));
+			index+=sizeof(data);
+			i+=4;
+		}
+		iounmap(rpm_pm_log_reg_base);
+		return len;
+	}
+	else
+	{	
+		printk("rpm_pm_log_reg_base io remap fail\n");
+		return 0;
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(msm_rpmstats_dump);
+/* } Terry Cheng, Dump rpm stats to bufer for pm log */
+/* Terry Cheng, 20120601, Dump rpm sleep mode stats to bufer for pm log {*/
+int msm_rpm_sleep_stats_dump(char *buffer, int bufer_size)
+{
+
+	int size = 0;
+	
+	if(!buffer){
+		pr_err("%s buffer is NULL!!", __FUNCTION__);
+		goto out;
+	}
+	msm_rpmstats_prvdata = kmalloc(sizeof(struct msm_rpmstats_private_data), GFP_KERNEL);
+	memset(msm_rpmstats_prvdata, 0, sizeof(struct msm_rpmstats_private_data) );
+	if(!msm_rpmstats_prvdata)
+	{
+		pr_err("%s could not alloc memory for msm_rpmstats_prvdata\n", __FUNCTION__);
+		goto out;
+	}	
+	msm_rpmstats_prvdata->reg_base = ioremap(msm_rpmstats_pdata->phys_addr_base, msm_rpmstats_pdata->phys_size);
+	if (!msm_rpmstats_prvdata->reg_base) {
+		pr_err("%s could not ioremap\n", __FUNCTION__);
+		goto out;
+	}
+	msm_rpmstats_prvdata->read_idx = msm_rpmstats_prvdata->num_records =  msm_rpmstats_prvdata->len = 0;
+	msm_rpmstats_prvdata->platform_data = msm_rpmstats_pdata;
+	
+	if (!msm_rpmstats_prvdata->num_records)
+	{	
+		msm_rpmstats_prvdata->num_records = readl_relaxed(msm_rpmstats_prvdata->reg_base);
+	}
+	while ( msm_rpmstats_prvdata->read_idx < msm_rpmstats_prvdata->num_records) {
+		msm_rpmstats_prvdata->len = msm_rpmstats_copy_stats(msm_rpmstats_prvdata);
+		if( (msm_rpmstats_prvdata->len+size) < bufer_size){
+			memcpy(buffer+size, msm_rpmstats_prvdata->buf, msm_rpmstats_prvdata->len);
+			size += msm_rpmstats_prvdata->len;
+		}else{
+			pr_err("Log size is too larger\n");
+		}	
+	}
+out:
+	if(msm_rpmstats_prvdata->reg_base)
+		iounmap(msm_rpmstats_prvdata->reg_base);
+	kfree(msm_rpmstats_prvdata);
+	msm_rpmstats_prvdata = NULL;
+	return size;
+}
+EXPORT_SYMBOL_GPL(msm_rpm_sleep_stats_dump);
+#endif	//CONFIG_PM_LOG
+/* } Terry Cheng, 20120601, Dump rpm sleep mode stats to bufer for pm log */
 static int msm_rpmstats_file_read(struct file *file, char __user *bufu,
 				  size_t count, loff_t *ppos)
 {
@@ -198,6 +356,15 @@ static  int __devinit msm_rpmstats_probe(struct platform_device *pdev)
 {
 	struct dentry *dent;
 	struct msm_rpmstats_platform_data *pdata;
+
+/* Terry Cheng, 20120601, Dump rpm sleep mode stats to bufer for pm log {*/
+#ifdef CONFIG_PM_LOG
+	//Save msm rpm stats platform data
+	msm_rpmstats_pdata =pdev->dev.platform_data;
+	if (!msm_rpmstats_pdata)
+		return -EINVAL;
+#endif	//CONFIG_PM_LOG
+/* } Terry Cheng, 20120601, Dump rpm sleep mode stats to bufer for pm log */
 
 	pdata = pdev->dev.platform_data;
 	if (!pdata)

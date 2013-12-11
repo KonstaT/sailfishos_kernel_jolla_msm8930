@@ -51,6 +51,35 @@
 #include "timer.h"
 #include "pm-boot.h"
 #include <mach/event_timer.h>
+#include "rpm_resources.h"	//20120919, Terry Cheng, Show RPM resource log
+
+#ifdef CONFIG_PM_LOG
+//Terry 20110818, implement log suspend time and wakeup time
+#include <linux/android_alarm.h>
+#include <mach/pm_log.h>
+#include <linux/rtc.h>
+struct timespec rtc_begin, rtc_end;
+int is_wakeup_from_pc = 0;
+extern int  msm_smd_debug_mask;
+enum {
+	MSM_SMD_DEBUG = 1U << 0,
+	MSM_SMSM_DEBUG = 1U << 1,
+	MSM_SMD_INFO = 1U << 2,
+	MSM_SMSM_INFO = 1U << 3,
+	MSM_SMx_POWER_INFO = 1U << 4,
+};
+#endif //CONFIG_PM_LOG
+
+/* Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp {*/
+extern void pm8xxx_mpp_dbg_show_suspend_resume_dump(void);
+extern void pm_gpio_dbg_show_suspend_resume_dump(void);
+extern void msm_gpio_dbg_show_suspend_resume_dump(void);
+/* } Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp */
+
+/* Terry Cheng, 20121128, Add dump xo information when suspend {*/
+void debug_dump_xo_status(void);
+void dump_all_active_clocks(void);
+/* } Terry Cheng, 20121128, Add dump xo information when suspend */
 
 /******************************************************************************
  * Debug Definitions
@@ -66,9 +95,12 @@ enum {
 	MSM_PM_DEBUG_IDLE = BIT(6),
 	MSM_PM_DEBUG_IDLE_LIMITS = BIT(7),
 	MSM_PM_DEBUG_HOTPLUG = BIT(8),
+	MSM_PM_DEBUG_DUMP_SOC_GPIO_PIN_MUX = BIT(9),	//Terry Cheng, 20120220, Add to dump soc gpio pmin mux
+	MSM_PM_DEBUG_DUMP_PMIC_GPIO_PIN_MUX = BIT(10),	//Terry Cheng, 20120220, Add to dump pmic gpio pmin mux
+	MSM_PM_DEBUG_DUMP_PMIC_MPP_PIN_MUX = BIT(11),	//Terry Cheng, 20120220, Add to dump pmic mpp  pmin mux	
 };
 
-static int msm_pm_debug_mask = 1;
+static int msm_pm_debug_mask = MSM_PM_DEBUG_SUSPEND|MSM_PM_DEBUG_SUSPEND_LIMITS;//20120529, Terry Enable show deubg suspend limit by default
 module_param_named(
 	debug_mask, msm_pm_debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP
 );
@@ -982,7 +1014,10 @@ static int msm_pm_enter(suspend_state_t state)
 	}
 
 	if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE]) {
-		void *rs_limits = NULL;
+		/* 20120919, Terry Cheng, Show RPM resource log {*/
+		//void *rs_limits = NULL;
+		struct msm_rpmrs_limits *rs_limits = NULL;
+		/* } 20120919, Terry Cheng, Show RPM resource log */
 		int ret = -ENODEV;
 		uint32_t power;
 
@@ -999,9 +1034,32 @@ static int msm_pm_enter(suspend_state_t state)
 			msm_pm_sleep_time_override = 0;
 		}
 #endif /* CONFIG_MSM_SLEEP_TIME_OVERRIDE */
+
+		/* 20120919, Terry Cheng, Show RPM resource log {*/
+		if (MSM_PM_DEBUG_SUSPEND_LIMITS & msm_pm_debug_mask)
+			msm_rpmrs_show_resources();
+		/* } 20120919, Terry Cheng, Show RPM resource log */
+
 		if (pm_sleep_ops.lowest_limits)
 			rs_limits = pm_sleep_ops.lowest_limits(false,
 			MSM_PM_SLEEP_MODE_POWER_COLLAPSE, &time_param, &power);
+
+		/* 20120919, Terry Cheng, Show RPM resource log when suspend {*/
+		if ((MSM_PM_DEBUG_SUSPEND_LIMITS & msm_pm_debug_mask) &&
+				rs_limits){
+			pr_info("%s: limit %p: pxo %d, l2_cache %d, "
+				"vdd_mem %d, vdd_dig %d\n",
+				__func__, rs_limits,
+				rs_limits->pxo, rs_limits->l2_cache,
+				rs_limits->vdd_mem, rs_limits->vdd_dig);
+
+			/* Terry Cheng, 20121128, Add dump xo information when suspend { */
+			if(rs_limits->pxo == 1) //20130403, Move here to fix oops. rs_limits is checked. 
+				dump_all_active_clocks();	
+			debug_dump_xo_status();
+			/* } Terry Cheng, 20121128, Add dump xo information when suspend */
+		}	
+		/* } 20120919, Terry Cheng, Show RPM resource log when suspend */
 
 		if (rs_limits) {
 			if (pm_sleep_ops.enter_sleep)
@@ -1009,11 +1067,52 @@ static int msm_pm_enter(suspend_state_t state)
 						msm_pm_max_sleep_time,
 						rs_limits, false, true);
 			if (!ret) {
-				int collapsed = msm_pm_power_collapse(false);
+				/* Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp {*/
+				int collapsed = 0;
+				if (MSM_PM_DEBUG_DUMP_SOC_GPIO_PIN_MUX & msm_pm_debug_mask)
+				{
+					printk("Dump soc gpio pin mux before suspend\n");
+					msm_gpio_dbg_show_suspend_resume_dump();
+				}
+				if (MSM_PM_DEBUG_DUMP_PMIC_GPIO_PIN_MUX & msm_pm_debug_mask)
+				{
+					printk("Dump pmic gpio pin mux before suspend\n");
+					pm_gpio_dbg_show_suspend_resume_dump();
+
+				}
+				if (MSM_PM_DEBUG_DUMP_PMIC_MPP_PIN_MUX & msm_pm_debug_mask)
+				{
+					printk("Dump pmic mpp pin mux before suspend\n");
+					pm8xxx_mpp_dbg_show_suspend_resume_dump();
+				}
+				/* } Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp */
+				msm_pm_power_collapse(false);
 				if (pm_sleep_ops.exit_sleep) {
 					pm_sleep_ops.exit_sleep(rs_limits,
 						false, true, collapsed);
 				}
+#ifdef CONFIG_PM_LOG
+				is_wakeup_from_pc = 1;
+				msm_smd_debug_mask |= MSM_SMx_POWER_INFO;
+#endif	//CONFIG_PM_LOG					
+
+				/* Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp {*/
+				if (MSM_PM_DEBUG_DUMP_SOC_GPIO_PIN_MUX & msm_pm_debug_mask)
+				{
+					printk("Dump soc gpio pin mux after suspend\n");
+					msm_gpio_dbg_show_suspend_resume_dump();
+				}
+				if (MSM_PM_DEBUG_DUMP_PMIC_GPIO_PIN_MUX & msm_pm_debug_mask)
+				{
+					printk("Dump pmic gpio pin mux after suspend\n");
+					pm_gpio_dbg_show_suspend_resume_dump();
+				}				
+				if (MSM_PM_DEBUG_DUMP_PMIC_MPP_PIN_MUX & msm_pm_debug_mask)
+				{
+					printk("Dump pmic mpp pin mux after suspend\n");
+					pm8xxx_mpp_dbg_show_suspend_resume_dump();
+				}
+				/* } Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp */		
 			}
 		} else {
 			pr_err("%s: cannot find the lowest power limit\n",
@@ -1043,7 +1142,36 @@ enter_exit:
 	return 0;
 }
 
+#ifdef CONFIG_PM_LOG
+//Register suspend prepare to count wake up time
+static int msm_suspend_prepare(void)
+{
+	rtc_begin = ktime_to_timespec(alarm_get_elapsed_realtime());
+	if (rtc_end.tv_sec > 0)
+		pmlog_update_wakeup( rtc_begin.tv_sec-rtc_end.tv_sec );
+	return 0;
+}
+//Register suspend finish to count deep sleep time
+static void msm_suspend_end(void)
+{
+	if (MSM_PM_DEBUG_SUSPEND & msm_pm_debug_mask)
+		pr_info("%s, is_wakeup_from_pc = %d\n", __func__, is_wakeup_from_pc);
+	
+	//Check whether wake up from suspend power collapse. It may call from suspend fail
+	if(is_wakeup_from_pc)
+	{	
+		rtc_end = ktime_to_timespec(alarm_get_elapsed_realtime());	
+		is_wakeup_from_pc = 0;
+		msm_smd_debug_mask &= (~(MSM_SMx_POWER_INFO));
+	}	
+}
+#endif 	//CONFIG_PM_LOG
+
 static struct platform_suspend_ops msm_pm_ops = {
+#ifdef CONFIG_PM_LOG
+	.prepare = msm_suspend_prepare,	//For statistics wakeup time 
+	.end = msm_suspend_end,	//For statistics wakeup time 
+#endif  //CONFIG_PM_LOG	
 	.enter = msm_pm_enter,
 	.valid = suspend_valid_only_mem,
 };

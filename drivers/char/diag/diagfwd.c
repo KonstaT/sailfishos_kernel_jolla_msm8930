@@ -30,6 +30,7 @@
 #include <mach/msm_smd.h>
 #include <mach/socinfo.h>
 #include <mach/restart.h>
+#include <linux/debugfs.h>
 #include "diagmem.h"
 #include "diagchar.h"
 #include "diagfwd.h"
@@ -46,6 +47,9 @@
 #define ALL_SSID		-1
 #define MAX_SSID_PER_RANGE	100
 
+
+extern struct dentry *kernel_debuglevel_dir;
+
 int diag_debug_buf_idx;
 unsigned char diag_debug_buf[1024];
 static unsigned int buf_tbl_size = 8; /*Number of entries in table of buffers */
@@ -60,6 +64,7 @@ struct mask_info {
 	int num_items;
 	int index;
 };
+unsigned int DIAG_DLL = 0;
 
 #define CREATE_MSG_MASK_TBL_ROW(XX)					\
 do {									\
@@ -238,7 +243,7 @@ void chk_logging_wakeup(void)
 		 */
 		if ((driver->data_ready[i] & USER_SPACE_LOG_TYPE) == 0) {
 			driver->data_ready[i] |= USER_SPACE_LOG_TYPE;
-			pr_debug("diag: Force wakeup of logging process\n");
+			diag_printk(1,"diag: %s Force wakeup of logging process\n",__func__);
 			wake_up_interruptible(&driver->wait_q);
 		}
 	}
@@ -304,12 +309,7 @@ int diag_device_write(void *buf, int proc_num, struct diag_request *write_ptr)
 					driver->buf_tbl[i].buf = buf;
 					driver->buf_tbl[i].length =
 								 driver->used;
-#ifdef DIAG_DEBUG
-					pr_debug("diag: ENQUEUE buf ptr"
-						   " and length is %x , %d\n",
-						   (unsigned int)(driver->buf_
-				tbl[i].buf), driver->buf_tbl[i].length);
-#endif
+					diag_printk(1,"diag:%s  ENQUEUE buf ptr and length is %x,%d\n",__func__,(unsigned int)(driver->buf_tbl[i].buf), driver->buf_tbl[i].length);
 					break;
 				}
 		}
@@ -334,8 +334,8 @@ int diag_device_write(void *buf, int proc_num, struct diag_request *write_ptr)
 			if (foundIndex == -1)
 				err = -1;
 			else
-				pr_debug("diag: ENQUEUE HSIC buf ptr and length is %x , %d\n",
-					(unsigned int)buf,
+				diag_printk(1,"diag:%s  ENQUEUE HSIC buf ptr and length is %x , %d\n",
+					__func__,(unsigned int)buf,
 					driver->write_len_mdm);
 		}
 #endif
@@ -345,7 +345,7 @@ int diag_device_write(void *buf, int proc_num, struct diag_request *write_ptr)
 				break;
 		if (i < driver->num_clients) {
 			driver->data_ready[i] |= USER_SPACE_LOG_TYPE;
-			pr_debug("diag: wake up logging process\n");
+			diag_printk(1,"diag:%s wake up logging process\n",__func__);
 			wake_up_interruptible(&driver->wait_q);
 		} else
 			return -EINVAL;
@@ -397,13 +397,10 @@ int diag_device_write(void *buf, int proc_num, struct diag_request *write_ptr)
 				err = -1;
 		} else if (proc_num == MODEM_DATA) {
 			write_ptr->buf = buf;
-#ifdef DIAG_DEBUG
-			printk(KERN_INFO "writing data to USB,"
-				"pkt length %d\n", write_ptr->length);
-			print_hex_dump(KERN_DEBUG, "Written Packet Data to"
-					   " USB: ", 16, 1, DUMP_PREFIX_ADDRESS,
-					    buf, write_ptr->length, 1);
-#endif /* DIAG DEBUG */
+
+			diag_printk(1,"diag: %s writing data to USB,"
+				"pkt length %d\n",__func__, write_ptr->length);
+
 			err = usb_diag_write(driver->legacy_ch, write_ptr);
 		} else if (proc_num == QDSP_DATA) {
 			write_ptr->buf = buf;
@@ -456,7 +453,7 @@ int diag_device_write(void *buf, int proc_num, struct diag_request *write_ptr)
 			}
 		} else if (proc_num == SMUX_DATA) {
 				write_ptr->buf = buf;
-				pr_debug("diag: writing SMUX data\n");
+				diag_printk(1,"diag:%s writing SMUX data\n",__func__);
 				err = usb_diag_write(driver->mdm_ch, write_ptr);
 		}
 #endif
@@ -576,7 +573,8 @@ static void diag_print_mask_table(void)
 		ptr += 4;
 		actual_last = *(uint32_t *)ptr;
 		ptr += 4;
-		pr_info("diag: SSID %d, %d - %d\n", first, last, actual_last);
+		
+		diag_printk(1,"diag:%s SSID %d, %d - %d\n",__func__, first, last, actual_last);
 		for (i = 0 ; i <= actual_last - first ; i++)
 			pr_info("diag: MASK:%x\n", *((uint32_t *)ptr + i));
 		ptr += MAX_SSID_PER_RANGE*4;
@@ -626,7 +624,7 @@ static void diag_set_msg_mask(int rt_mask)
 		last_ssid = *(uint32_t *)ptr;
 		ptr += 4;
 		parse_ptr = ptr;
-		pr_debug("diag: updating range %d %d\n", first_ssid, last_ssid);
+		diag_printk(1,"diag:%s updating range %d %d\n",__func__, first_ssid, last_ssid);
 		for (i = 0; i < last_ssid - first_ssid + 1; i++) {
 			*(int *)parse_ptr = rt_mask;
 			parse_ptr += 4;
@@ -664,8 +662,8 @@ static void diag_update_msg_mask(int start, int end , uint8_t *buf)
 			}
 			if (CHK_OVERFLOW(ptr_buffer_start, ptr, ptr_buffer_end,
 					  (((end - start)+1)*4))) {
-				pr_debug("diag: update ssid start %d, end %d\n",
-								 start, end);
+				diag_printk(1,"diag:%s update ssid start %d, end %d\n",
+								 __func__,start, end);
 				memcpy(ptr, buf , ((end - start)+1)*4);
 			} else
 				pr_alert("diag: Not enough space MSG_MASK\n");
@@ -685,8 +683,8 @@ static void diag_update_msg_mask(int start, int end , uint8_t *buf)
 			ptr += 4;
 			memcpy(ptr, &(end), 4); /* create actual_last entry */
 			ptr += 4;
-			pr_debug("diag: adding NEW ssid start %d, end %d\n",
-								 start, end);
+			diag_printk(1,"diag:%s adding NEW ssid start %d, end %d\n",
+								__func__, start, end);
 			memcpy(ptr, buf , ((end - start) + 1)*4);
 		} else
 			pr_alert("diag: Not enough buffer space for MSG_MASK\n");
@@ -730,10 +728,10 @@ static void diag_disable_log_mask(void)
 	int i = 0;
 	struct mask_info *parse_ptr = (struct mask_info *)(driver->log_masks);
 
-	pr_debug("diag: disable log masks\n");
+	diag_printk(1,"diag:%s disable log masks\n",__func__);
 	mutex_lock(&driver->diagchar_mutex);
 	for (i = 0; i < MAX_EQUIP_ID; i++) {
-		pr_debug("diag: equip id %d\n", parse_ptr->equip_id);
+		diag_printk(1,"diag:%s equip id %d\n",__func__, parse_ptr->equip_id);
 		if (!(parse_ptr->equip_id)) /* Reached a null entry */
 			break;
 		memset(driver->log_masks + parse_ptr->index, 0,
@@ -749,7 +747,7 @@ int chk_equip_id_and_mask(int equip_id, uint8_t *buf)
 	unsigned char *ptr_data;
 	struct mask_info *ptr = (struct mask_info *)(driver->log_masks);
 
-	pr_debug("diag: received equip id = %d\n", equip_id);
+	diag_printk(1,"diag:%s received equip id = %d\n",__func__, equip_id);
 	/* Check if this is valid equipment ID */
 	for (i = 0; i < MAX_EQUIP_ID; i++) {
 		if ((ptr->equip_id == equip_id) && (ptr->index != 0)) {
@@ -775,7 +773,7 @@ static void diag_update_log_mask(int equip_id, uint8_t *buf, int num_items)
 	int offset = (sizeof(struct mask_info))*MAX_EQUIP_ID;
 	struct mask_info *ptr = (struct mask_info *)(driver->log_masks);
 
-	pr_debug("diag: received equip id = %d\n", equip_id);
+	diag_printk(1,"diag:%s received equip id = %d\n",__func__, equip_id);
 	mutex_lock(&driver->diagchar_mutex);
 	/* Check if we already know index of this equipment ID */
 	for (i = 0; i < MAX_EQUIP_ID; i++) {
@@ -938,8 +936,8 @@ void diag_send_log_mask_update(smd_channel_t *ch, int equip_id)
 					pr_err("diag: log mask update failed"
 				 " %d, tried %d", wr_size, header_size + size);
 				else
-					pr_debug("diag: updated log equip ID %d"
-					",len %d\n", driver->log_mask->equip_id,
+					diag_printk(1,"diag:%s updated log equip ID %d"
+					",len %d\n", __func__,driver->log_mask->equip_id,
 					 driver->log_mask->log_mask_size);
 			} else
 				pr_err("diag: ch not valid for log update\n");
@@ -957,7 +955,7 @@ void diag_send_event_mask_update(smd_channel_t *ch, int num_bytes)
 
 	mutex_lock(&driver->diag_cntl_mutex);
 	if (num_bytes == 0) {
-		pr_debug("diag: event mask not set yet, so no update\n");
+		diag_printk(1,"diag:%s event mask not set yet, so no update\n",__func__);
 		mutex_unlock(&driver->diag_cntl_mutex);
 		return;
 	}
@@ -1038,8 +1036,8 @@ void diag_send_msg_mask_update(smd_channel_t *ch, int updated_ssid_first,
 	 "fail %d, tried %d\n", proc, size,
 	 header_size + 4*(driver->msg_mask->msg_mask_size));
 				else
-					pr_debug("diag: sending mask update for ssid first %d, last %d on PROC %d\n",
-						first, actual_last, proc);
+					diag_printk(1,"diag:%s sending mask update for ssid first %d, last %d on PROC %d\n",
+						__func__,first, actual_last, proc);
 			} else
 				pr_err("diag: proc %d, ch invalid msg mask"
 						 "update\n", proc);
@@ -1176,8 +1174,8 @@ static int diag_process_apps_pkt(unsigned char *buf, int len)
 		ssid_first = *(uint16_t *)(buf + 2);
 		ssid_last = *(uint16_t *)(buf + 4);
 		ssid_range = 4 * (ssid_last - ssid_first + 1);
-		pr_debug("diag: received mask update for ssid_first = %d,"
-				" ssid_last = %d", ssid_first, ssid_last);
+		diag_printk(1,"diag:%s received mask update for ssid_first = %d,"
+				" ssid_last = %d",__func__, ssid_first, ssid_last);
 		diag_update_msg_mask(ssid_first, ssid_last , buf + 8);
 		diag_update_userspace_clients(MSG_MASKS_TYPE);
 #if defined(CONFIG_DIAG_OVER_USB)
@@ -1291,7 +1289,7 @@ static int diag_process_apps_pkt(unsigned char *buf, int len)
 			data_type = MODEM_DATA;
 	}
 
-	pr_debug("diag: %d %d %d", cmd_code, subsys_id, subsys_cmd_code);
+	diag_printk(1,"diag:%s %d %d %d",__func__, cmd_code, subsys_id, subsys_cmd_code);
 	for (i = 0; i < diag_max_reg; i++) {
 		entry = driver->table[i];
 		if (entry.process_id != NO_PROCESS) {
@@ -1619,8 +1617,8 @@ static inline void diag_send_error_rsp(int index) {}
 void diag_process_hdlc(void *data, unsigned len)
 {
 	struct diag_hdlc_decode_type hdlc;
-	int ret, type = 0;
-	pr_debug("diag: HDLC decode fn, len of data  %d\n", len);
+	int ret, i,type = 0;
+	diag_printk(1,"diag:%s HDLC decode fn, len of data  %d\n",__func__, len);
 	hdlc.dest_ptr = driver->hdlc_buf;
 	hdlc.dest_size = USB_MAX_OUT_BUF;
 	hdlc.src_ptr = data;
@@ -1659,22 +1657,19 @@ void diag_process_hdlc(void *data, unsigned len)
 		type = 0;
 	}
 
-#ifdef DIAG_DEBUG
-	pr_debug("diag: hdlc.dest_idx = %d", hdlc.dest_idx);
-	for (i = 0; i < hdlc.dest_idx; i++)
-		printk(KERN_DEBUG "\t%x", *(((unsigned char *)
+	diag_printk(1,"diag:%s hdlc.dest_idx = %d",__func__, hdlc.dest_idx);
+	for ( i = 0; i < hdlc.dest_idx; i++)
+		diag_printk(1, "\t%x", *(((unsigned char *)
 							driver->hdlc_buf)+i));
-#endif /* DIAG DEBUG */
 	/* ignore 2 bytes for CRC, one for 7E and send */
 	if ((driver->ch) && (ret) && (type) && (hdlc.dest_idx > 3)) {
 		APPEND_DEBUG('g');
 		smd_write(driver->ch, driver->hdlc_buf, hdlc.dest_idx - 3);
 		APPEND_DEBUG('h');
-#ifdef DIAG_DEBUG
-		printk(KERN_INFO "writing data to SMD, pkt length %d\n", len);
+
+		diag_printk(1, "writing data to SMD, pkt length %d\n", len);
 		print_hex_dump(KERN_DEBUG, "Written Packet Data to SMD: ", 16,
 			       1, DUMP_PREFIX_ADDRESS, data, len, 1);
-#endif /* DIAG DEBUG */
 	}
 }
 
@@ -1942,20 +1937,20 @@ static int diag_smd_probe(struct platform_device *pdev)
 	}
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
-	pr_debug("diag: open SMD port, Id = %d, r = %d\n", pdev->id, r);
+	diag_printk(1,"diag: %s open SMD port, Id = %d, r = %d\n",__func__, pdev->id, r);
 
 	return 0;
 }
 
 static int diagfwd_runtime_suspend(struct device *dev)
 {
-	dev_dbg(dev, "pm_runtime: suspending...\n");
+	diag_printk(1,"pm_runtime: suspending...\n");
 	return 0;
 }
 
 static int diagfwd_runtime_resume(struct device *dev)
 {
-	dev_dbg(dev, "pm_runtime: resuming...\n");
+	diag_printk(1, "pm_runtime: resuming...\n");
 	return 0;
 }
 
@@ -1984,12 +1979,24 @@ static struct platform_driver diag_smd_lite_driver = {
 		   },
 };
 
+static void diagfc_create_kernel_debuglevel_entries(void)
+{
+	
+        if(kernel_debuglevel_dir != NULL) {
+                debugfs_create_u32("diag_dll", S_IRUGO | S_IWUGO,
+                        kernel_debuglevel_dir, (u32 *)(&DIAG_DLL));
+        } else{
+                diag_printk(0, "%s::create kernel debuglevel dir falied\n",__func__);
+        }
+}
+
 void diagfwd_init(void)
 {
 	diag_debug_buf_idx = 0;
 	driver->read_len_legacy = 0;
 	driver->use_device_tree = has_device_tree();
 	mutex_init(&driver->diag_cntl_mutex);
+	diagfc_create_kernel_debuglevel_entries();
 
 	if (driver->event_mask == NULL) {
 		driver->event_mask = kzalloc(sizeof(

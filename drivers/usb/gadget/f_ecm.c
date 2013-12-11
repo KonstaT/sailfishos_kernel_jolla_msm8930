@@ -19,6 +19,9 @@
 
 #include "u_ether.h"
 
+#ifndef DEBUG
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif /* !DEBUG */
 
 /*
  * This function is a "CDC Ethernet Networking Control Model" (CDC ECM)

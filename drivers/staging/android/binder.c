@@ -100,7 +100,9 @@ enum {
 	BINDER_DEBUG_BUFFER_ALLOC_ASYNC     = 1U << 15,
 	BINDER_DEBUG_TOP_ERRORS		    = 1U << 16,
 };
-static uint32_t binder_debug_mask;
+/* Bright Lee, 20130403, enable error mask for binder thread { */
+static uint32_t binder_debug_mask = BINDER_DEBUG_TOP_ERRORS;
+/* } Bright Lee, 20130403 */
 module_param_named(debug_mask, binder_debug_mask, uint, S_IWUSR | S_IRUGO);
 
 static bool binder_debug_no_lock;

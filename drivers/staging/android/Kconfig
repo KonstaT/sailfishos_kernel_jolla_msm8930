@@ -67,6 +67,20 @@ config ANDROID_LOW_MEMORY_KILLER
 	---help---
 	  Register processes to be killed when memory is low
 
+# Terry Cheng, 20111124, Port from 8250 platfrom to notify log master what happen from kernel side +
+config ANDROID_KERNEL_EVENT_DRIVER
+        bool "Report kernel exception and Modem crash event"
+        default y
+# Terry Cheng, 20111124, Port from 8250 platfrom to notify log master what happen from kernel side -
+
+# Bright Lee, 20111114, mmap modem memory for log master {
+config ANDROID_MODEM_MEMORY_LOGGER
+        bool "Android modem memory map driver"
+	default y
+	depends on ARCH_MSM && ANDROID_LOGGER
+# } Bright Lee, 20111114
+
+
 source "drivers/staging/android/switch/Kconfig"
 
 config ANDROID_INTF_ALARM_DEV

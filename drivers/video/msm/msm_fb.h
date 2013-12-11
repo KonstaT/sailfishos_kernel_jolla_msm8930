@@ -177,6 +177,7 @@ struct msm_fb_data_type {
 	struct completion msmfb_no_update_notify;
 	struct mutex writeback_mutex;
 	struct mutex unregister_mutex;
+	struct mutex blank_mutex;
 	struct list_head writeback_busy_queue;
 	struct list_head writeback_free_queue;
 	struct list_head writeback_register_queue;

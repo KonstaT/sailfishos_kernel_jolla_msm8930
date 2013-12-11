@@ -34,6 +34,12 @@
 #include <net/bluetooth/hci.h>
 #include <mach/msm_smd.h>
 
+//Mark added PM_LOG for BT in 2012.5.29
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#include <linux/platform_device.h>
+#endif //CONFIG_PM_LOG
+
 #define EVENT_CHANNEL		"APPS_RIVA_BT_CMD"
 #define DATA_CHANNEL		"APPS_RIVA_BT_ACL"
 /* release wakelock in 500ms, not immediately, because higher layers
@@ -80,6 +86,11 @@ struct hci_smd_data {
 	struct tasklet_struct rx_task;
 };
 static struct hci_smd_data hs;
+
+//Mark added PM_LOG for BT in 2012.5.29
+#ifdef CONFIG_PM_LOG
+struct pmlog_device *bt_pmlog_device; 
+#endif //CONFIG_PM_LOG    
 
 /* Rx queue monitor timer function */
 static int is_rx_q_empty(unsigned long arg)
@@ -506,6 +517,15 @@ static int hci_smd_register_smd(struct hci_smd_data *hsmd)
 		ssr_state = STATE_SSR_CHANNEL_OPEN_PENDING;
 		BT_INFO("SSR state is : %x", ssr_state);
 	}
+
+      //Mark added PM_LOG for BT in 2012.5.29
+      #ifdef CONFIG_PM_LOG
+          rc = pmlog_device_on(bt_pmlog_device);
+          if (rc) {
+              printk("pmlog_device_on fail rc = %d\n", rc);
+          }
+      #endif //CONFIG_PM_LOG
+
 	/* Open the SMD Channel and device and register the callback function */
 	rc = smd_named_open_on_edge(EVENT_CHANNEL, SMD_APPS_WCNSS,
 			&hsmd->event_channel, hdev, hci_smd_notify_event);
@@ -533,12 +553,25 @@ static int hci_smd_register_smd(struct hci_smd_data *hsmd)
 
 static void hci_smd_deregister_dev(struct hci_smd_data *hsmd)
 {
+       int rc;//Mark added for PM_LOG
 	tasklet_kill(&hs.rx_task);
+
 	if (ssr_state)
 		BT_DBG("SSR state is : %x", ssr_state);
 	/* Though the hci_smd driver is not registered with the hci
 	 * need to close the opened channels as a part of cleaup
 	 */
+
+       //Mark added PM_LOG for BT in 2012.5.29
+       #ifdef CONFIG_PM_LOG
+           //printk("Mankim check BT pmlog_device_off\n");
+           //rc = pmlog_device_off(hsmd->pmlog_device);
+           rc = pmlog_device_off(bt_pmlog_device);
+           if (rc) {
+               printk("pmlog_device_off fail rc = %d\n", rc);
+           }
+       #endif //CONFIG_PM_LOG
+
 	if (!test_and_clear_bit(HCI_REGISTER_SET, &hsmd->flags)) {
 		BT_ERR("HCI device un-registered already");
 	} else {
@@ -655,8 +688,42 @@ done:
 	up(&hci_smd_enable);
 	return ret;
 }
+
+//Mark added PM_LOG for BT in 2012.5.29 begin
+#ifdef CONFIG_PM_LOG
+static int __devinit 
+bt_probe(struct platform_device *pdev)
+{
+	bt_pmlog_device = pmlog_register_device(&pdev->dev);
+	return 0;
+}
+
+static int __devexit 
+bt_remove(struct platform_device *pdev)
+{
+	pmlog_unregister_device(bt_pmlog_device);
+	return 0;
+}
+
+
+static struct platform_driver bt_power_driver = {
+	.driver = {
+		.name	= "bt_power",
+		.owner	= THIS_MODULE,
+	},
+	.probe	= bt_probe,
+	.remove	= __devexit_p(bt_remove),
+};
+#endif //CONFIG_PM_LOG
+//Mark added PM_LOG for BT in 2012.5.29 end
+
 static int  __init hci_smd_init(void)
 {
+       //Mark added PM_LOG for BT in 2012.5.29
+       #ifdef CONFIG_PM_LOG
+       platform_driver_register(&bt_power_driver);
+       #endif //CONFIG_PM_LOG
+       
 	wake_lock_init(&hs.wake_lock_rx, WAKE_LOCK_SUSPEND,
 			 "msm_smd_Rx");
 	wake_lock_init(&hs.wake_lock_tx, WAKE_LOCK_SUSPEND,
@@ -670,6 +737,11 @@ module_init(hci_smd_init);
 
 static void __exit hci_smd_exit(void)
 {
+       //Mark added PM_LOG for BT in 2012.5.29
+       #ifdef CONFIG_PM_LOG
+       platform_driver_unregister(&bt_power_driver);
+       #endif //CONFIG_PM_LOG
+       
 	wake_lock_destroy(&hs.wake_lock_rx);
 	wake_lock_destroy(&hs.wake_lock_tx);
 }

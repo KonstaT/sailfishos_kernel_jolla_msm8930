@@ -76,7 +76,7 @@ static int vdd_mask;
 #define RPMRS_ATTR(_name) \
 	__ATTR(_name, S_IRUGO|S_IWUSR, \
 		msm_rpmrs_resource_attr_show, msm_rpmrs_resource_attr_store)
-
+   
 struct msm_rpmrs_resource {
 	struct msm_rpm_iv_pair rs[MSM_RPMRS_MAX_RS_REGISTER_COUNT];
 	uint32_t size;
@@ -892,7 +892,8 @@ s32 msm_cpuidle_get_deep_idle_latency(void)
 	return best->latency_us - 1;
 }
 
-static void *msm_rpmrs_lowest_limits(bool from_idle,
+//20120919, Terry Cheng, Show RPM resource log when suspend 
+static struct msm_rpmrs_limits *msm_rpmrs_lowest_limits(bool from_idle,
 		enum msm_pm_sleep_mode sleep_mode,
 		struct msm_pm_time_params *time_param, uint32_t *power)
 {
@@ -1151,6 +1152,11 @@ static int __init msm_rpmrs_l2_init(void)
 	}
 
 	msm_pm_set_sleep_ops(&msm_rpmrs_ops);
+
+	//Terry Cheng, 20121101, Parse rpm log
+#ifdef CONFIG_PM_LOG
+	pmlog_set_sleep_ops(&msm_rpmrs_ops);
+#endif	//CONFIG_PM_LOG
 
 	return 0;
 }

@@ -27,6 +27,11 @@
 #include <linux/delay.h>
 #include <linux/rtc.h>
 
+//Eric Liu+
+#include <linux/wakelock.h>
+#define MSG2(format, arg...)  printk(KERN_INFO "[BAT]" format "\n", ## arg)
+//Eric Liu-
+
 #define CCADC_ANA_PARAM		0x240
 #define CCADC_DIG_PARAM		0x241
 #define CCADC_RSV		0x242
@@ -81,9 +86,13 @@ struct pm8xxx_ccadc_chip {
 	int			r_sense_uohm;
 	struct delayed_work	calib_ccadc_work;
 	struct mutex		calib_mutex;
+	bool			periodic_wakeup;
+	struct wake_lock calib_wake_lock;  //Eric Liu, keep wake while doing calibration
 };
 
 static struct pm8xxx_ccadc_chip *the_chip;
+
+extern int bms_r_sense_uohm;//Carl Chang, 20130626, add for calibration r_sense_uohm
 
 #ifdef DEBUG
 static s64 microvolt_to_ccadc_reading(struct pm8xxx_ccadc_chip *chip, s64 cc)
@@ -367,19 +376,28 @@ static int get_current_time(unsigned long *now_tm_sec)
 	return 0;
 }
 
-void pm8xxx_calib_ccadc(void)
+static void __pm8xxx_calib_ccadc(int sample_count)
 {
 	u8 data_msb, data_lsb, sec_cntrl;
 	int result_offset, result_gain;
 	u16 result;
 	int i, rc;
+	//Eric Liu+
+	int batt_temp;
+	unsigned long current_time_sec;
+	//Eric Liu-
+
+	//MSG2("%s+",__func__);
 
 	if (!the_chip) {
 		pr_err("chip not initialized\n");
 		return;
 	}
 
+	pr_debug("sample_count = %d\n", sample_count);
+
 	mutex_lock(&the_chip->calib_mutex);
+	wake_lock(&the_chip->calib_wake_lock);  //Eric Liu, keep wake while doing calibration
 	rc = pm8xxx_readb(the_chip->dev->parent,
 					ADC_ARB_SECP_CNTRL, &sec_cntrl);
 	if (rc < 0) {
@@ -405,7 +423,7 @@ void pm8xxx_calib_ccadc(void)
 	}
 
 	result_offset = 0;
-	for (i = 0; i < SAMPLE_COUNT; i++) {
+	for (i = 0; i < sample_count; i++) {
 		/* Short analog inputs to CCADC internally to ground */
 		rc = pm8xxx_writeb(the_chip->dev->parent, ADC_ARB_SECP_RSV,
 							CCADC_CALIB_RSV_GND);
@@ -431,7 +449,7 @@ void pm8xxx_calib_ccadc(void)
 		result_offset += result;
 	}
 
-	result_offset = result_offset / SAMPLE_COUNT;
+	result_offset = result_offset / sample_count;
 
 
 	pr_debug("offset result_offset = 0x%x, voltage = %llduV\n",
@@ -470,7 +488,7 @@ void pm8xxx_calib_ccadc(void)
 	}
 
 	result_gain = 0;
-	for (i = 0; i < SAMPLE_COUNT; i++) {
+	for (i = 0; i < sample_count; i++) {
 		rc = pm8xxx_writeb(the_chip->dev->parent,
 					ADC_ARB_SECP_RSV, CCADC_CALIB_RSV_25MV);
 		if (rc < 0) {
@@ -494,7 +512,7 @@ void pm8xxx_calib_ccadc(void)
 
 		result_gain += result;
 	}
-	result_gain = result_gain / SAMPLE_COUNT;
+	result_gain = result_gain / sample_count;
 
 	/*
 	 * result_offset includes INTRINSIC OFFSET
@@ -517,7 +535,28 @@ void pm8xxx_calib_ccadc(void)
 bail:
 	pm8xxx_writeb(the_chip->dev->parent, ADC_ARB_SECP_CNTRL, sec_cntrl);
 calibration_unlock:
+	//Eric Liu+
+	if(!rc) //if calibration success, update the temp and time
+	{
+		if(get_batt_temp(the_chip, &batt_temp) == 0)
+			the_chip->last_calib_temp = batt_temp;
+		if(get_current_time(&current_time_sec) == 0)
+			the_chip->last_calib_time = current_time_sec;
+	}
+	wake_unlock(&the_chip->calib_wake_lock);
+	//Eric Liu-
 	mutex_unlock(&the_chip->calib_mutex);
+	//MSG2("%s-",__func__);
+}
+
+static void pm8xxx_calib_ccadc_quick(void)
+{
+	__pm8xxx_calib_ccadc(2);
+}
+
+void pm8xxx_calib_ccadc(void)
+{
+	__pm8xxx_calib_ccadc(SAMPLE_COUNT);
 }
 EXPORT_SYMBOL(pm8xxx_calib_ccadc);
 
@@ -619,6 +658,10 @@ int pm8xxx_ccadc_get_battery_current(int *bat_current_ua)
 		pr_err("cant get voltage across rsense rc = %d\n", rc);
 		return rc;
 	}
+	//Carl Chang+, 20130626, add for calibration r_sense_uohm
+	MSG2("%s, r_sense_uohm %d -> %d",__func__,the_chip->r_sense_uohm,bms_r_sense_uohm);
+	the_chip->r_sense_uohm = bms_r_sense_uohm; 
+	//Carl Chang-
 
 	*bat_current_ua = div_s64((s64)voltage_uv * 1000000LL,
 						the_chip->r_sense_uohm);
@@ -737,6 +780,7 @@ static int __devinit pm8xxx_ccadc_probe(struct platform_device *pdev)
 	chip->r_sense_uohm = pdata->r_sense_uohm;
 	chip->calib_delay_ms = pdata->calib_delay_ms;
 	chip->batt_temp_channel = pdata->ccadc_cdata.batt_temp_channel;
+	chip->periodic_wakeup = pdata->periodic_wakeup;
 	mutex_init(&chip->calib_mutex);
 
 	calib_ccadc_read_offset_and_gain(chip,
@@ -750,6 +794,8 @@ static int __devinit pm8xxx_ccadc_probe(struct platform_device *pdev)
 		pr_err("failed to request %d irq rc= %d\n", chip->eoc_irq, rc);
 		goto free_chip;
 	}
+
+	wake_lock_init(&chip->calib_wake_lock, WAKE_LOCK_SUSPEND, "pm8xxx_ccadc_calib_lock"); //Eric Liu
 
 	platform_set_drvdata(pdev, chip);
 	the_chip = chip;
@@ -777,11 +823,21 @@ static int __devexit pm8xxx_ccadc_remove(struct platform_device *pdev)
 }
 
 #define CCADC_CALIB_TEMP_THRESH 20
+//Eric Liu+
+static int pm8xxx_ccadc_suspend(struct device *dev)
+{
+	cancel_delayed_work_sync(&the_chip->calib_ccadc_work);
+	return 0;
+}
+//Eric Liu-
 static int pm8xxx_ccadc_resume(struct device *dev)
 {
 	int rc, batt_temp, delta_temp;
 	unsigned long current_time_sec;
 	unsigned long time_since_last_calib;
+	long next_calib_ms; //Eric Liu
+
+	//MSG2("%s+",__func__);
 
 	rc = get_batt_temp(the_chip, &batt_temp);
 	if (rc) {
@@ -793,6 +849,14 @@ static int pm8xxx_ccadc_resume(struct device *dev)
 		pr_err("unable to get current time: %d\n", rc);
 		return 0;
 	}
+
+	if (the_chip->periodic_wakeup) {
+		pm8xxx_calib_ccadc_quick();
+		return 0;
+	}
+
+	//Eric Liu+
+	#if 0
 	if (current_time_sec > the_chip->last_calib_time) {
 		time_since_last_calib = current_time_sec -
 					the_chip->last_calib_time;
@@ -803,14 +867,46 @@ static int pm8xxx_ccadc_resume(struct device *dev)
 				|| delta_temp > CCADC_CALIB_TEMP_THRESH) {
 			the_chip->last_calib_time = current_time_sec;
 			the_chip->last_calib_temp = batt_temp;
-			pm8xxx_calib_ccadc();
+			cancel_delayed_work(&the_chip->calib_ccadc_work);
+			schedule_delayed_work(&the_chip->calib_ccadc_work, 0);
 		}
 	}
+	#else
+	delta_temp = 0;
+	if (current_time_sec > the_chip->last_calib_time) {
+		time_since_last_calib = current_time_sec -
+					the_chip->last_calib_time;
+		delta_temp = abs(batt_temp - the_chip->last_calib_temp);
+		pr_debug("time since last calib: %lu, delta_temp = %d\n",
+					time_since_last_calib, delta_temp);
+		if (time_since_last_calib >= the_chip->calib_delay_ms/1000
+				|| delta_temp > CCADC_CALIB_TEMP_THRESH) {
+			next_calib_ms = 0;
+		}
+		else
+		{
+			next_calib_ms = the_chip->calib_delay_ms - time_since_last_calib * 1000;
+		}
+	}
+	else if(current_time_sec == the_chip->last_calib_time)
+		next_calib_ms = the_chip->calib_delay_ms;
+	else
+		next_calib_ms = 0;  //this case should not happen
+	if(next_calib_ms <= 0)
+		schedule_delayed_work(&the_chip->calib_ccadc_work, 0);
+	else
+		schedule_delayed_work(&the_chip->calib_ccadc_work, round_jiffies_relative(msecs_to_jiffies(next_calib_ms)));
+	#endif
+	//Eric Liu-
+
+	//MSG2("%s-, temp=%3dc(%3d), time=%6lds, next=%6ldms",__func__,batt_temp,delta_temp,current_time_sec,next_calib_ms);
+
 	return 0;
 }
 
 static const struct dev_pm_ops pm8xxx_ccadc_pm_ops = {
 	.resume		= pm8xxx_ccadc_resume,
+	.suspend  = pm8xxx_ccadc_suspend, //Eric Liu
 };
 
 static struct platform_driver pm8xxx_ccadc_driver = {

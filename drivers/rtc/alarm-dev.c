@@ -26,11 +26,25 @@
 
 #include <asm/mach/time.h>
 
+#ifdef CONFIG_EVIL_ALARM_DETECTION
+#include "../../kernel/power/power.h"
+#include <linux/workqueue.h>
+enum {
+	SUSPEND_REQUESTED = 0x1,
+	SUSPENDED = 0x2,
+	SUSPEND_REQUESTED_AND_SUSPENDED = SUSPEND_REQUESTED | SUSPENDED,
+};
+//60 seconds
+#define EVIL_ALARM_CHECK_THRESHOLD	60
+#define EVIL_ALARM_CHECK_TIMES		60
+//static struct work_struct	show_dumpsys_work;
+#endif //CONFIG_EVIL_ALARM_DETECTION
+
 #define ANDROID_ALARM_PRINT_INFO (1U << 0)
 #define ANDROID_ALARM_PRINT_IO (1U << 1)
 #define ANDROID_ALARM_PRINT_INT (1U << 2)
 
-static int debug_mask = ANDROID_ALARM_PRINT_INFO;
+static int debug_mask = ANDROID_ALARM_PRINT_INFO|ANDROID_ALARM_PRINT_INT; //Terry Cheng, 20130508, Show alarm log to debug some ap use alarm to make system cannot enter sleep
 module_param_named(debug_mask, debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP);
 
 #define pr_alarm(debug_level_mask, args...) \
@@ -57,6 +71,18 @@ static uint32_t alarm_enabled;
 static uint32_t wait_pending;
 
 static struct alarm alarms[ANDROID_ALARM_TYPE_COUNT];
+
+#if 0
+static void show_dumpsys_work_proc(struct work_struct *work)
+{
+	char *argv[] = { "/system/bin/logwrapper", "/system/bin/dumpsys", NULL };
+	char *envp[] = { NULL };
+	int rc  = 0;
+	pr_err("call_usermodehelper +\n");						
+	rc = call_usermodehelper("/system/bin/logwrapper", argv, envp, UMH_WAIT_PROC);	
+	pr_err("call_usermodehelper fail rc = %d\n", rc);					
+}
+#endif //0
 
 static long alarm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
@@ -233,10 +259,43 @@ static int alarm_release(struct inode *inode, struct file *file)
 
 static void alarm_triggered(struct alarm *alarm)
 {
-	unsigned long flags;
+	unsigned long flags;	
 	uint32_t alarm_type_mask = 1U << alarm->type;
 
-	pr_alarm(INT, "alarm_triggered type %d\n", alarm->type);
+	/* Terry Cheng, 20130508, Add evil alarm detection {*/
+	#ifdef CONFIG_EVIL_ALARM_DETECTION	
+	int state = get_suspend_state();	
+	//Detect evil alarm when LCD is off
+	if ( state & SUSPENDED ){
+		struct timespec cur_trigger_time ;
+		struct timespec delta;		
+		cur_trigger_time = ktime_to_timespec(alarm_get_elapsed_realtime());	
+		pr_alarm(INT, "alarm_triggered type %d count %d\n", alarm->type, alarm->count);
+		
+		if(( alarm->pre_trigger_time.tv_sec >  0) || (alarm->pre_trigger_time.tv_nsec >  0) ){
+
+			delta = timespec_sub(cur_trigger_time, alarm->pre_trigger_time);
+			if(delta.tv_sec <= EVIL_ALARM_CHECK_THRESHOLD ){
+				alarm->count++; //Consecutive alarm with the same type trigger time is too close
+				if(alarm->count > EVIL_ALARM_CHECK_TIMES){
+					//TODO 
+					pr_err("Detect evil alarm !!!!\n");
+					//Reset it and track again
+					alarm->count = 0;
+				}			
+			}	
+			else
+				alarm->count = 0; //Reset 
+		}
+		alarm->pre_trigger_time = cur_trigger_time;
+	}
+	else if (alarm->count == 0){
+		alarm->count = 0; //Alarm trigger when LCD is on so reset the alarm count
+		alarm->pre_trigger_time.tv_sec = 0;
+		alarm->pre_trigger_time.tv_nsec = 0;
+	}	
+	#endif //CONFIG_EVIL_ALARM_DETECTION
+	/* } Terry Cheng, 20130508, Add evil alarm detection */		
 	spin_lock_irqsave(&alarm_slock, flags);
 	if (alarm_enabled & alarm_type_mask) {
 		wake_lock_timeout(&alarm_wake_lock, 5 * HZ);
@@ -269,8 +328,16 @@ static int __init alarm_dev_init(void)
 	if (err)
 		return err;
 
-	for (i = 0; i < ANDROID_ALARM_TYPE_COUNT; i++)
+	for (i = 0; i < ANDROID_ALARM_TYPE_COUNT; i++){
 		alarm_init(&alarms[i], i, alarm_triggered);
+	/* Terry Cheng, 20130508, Add evil alarm detection {*/
+	#ifdef CONFIG_EVIL_ALARM_DETECTION
+		alarms[i].pre_trigger_time.tv_sec =0;
+		alarms[i].pre_trigger_time.tv_nsec =0;
+		//INIT_WORK(&show_dumpsys_work, show_dumpsys_work_proc);
+	#endif //CONFIG_EVIL_ALARM_DETECTION	
+	/* } Terry Cheng, 20130508, Add evil alarm detection */
+	}	
 	wake_lock_init(&alarm_wake_lock, WAKE_LOCK_SUSPEND, "alarm");
 
 	return 0;

@@ -32,6 +32,23 @@
 #include <linux/mutex.h>
 #include <linux/rtc.h>
 
+//Eric Liu+
+#define MSG2(format, arg...)  printk(KERN_INFO "[BAT]" format "\n", ## arg)
+extern int batt_bms_log;  //defined in pm8921-charger.c
+extern int batt_bms_ccpersoc_log;  //defined in pm8921-charger.c
+extern int chg_ibatmax_ma;//Carl Chang, 20130626, add for calibration r_sense_uohm
+#define MSG3(format, arg...)  {if(batt_bms_log) printk(KERN_INFO "[BAT]" format "\n", ## arg);}
+
+//battery log
+int bms_last_good_ocv_uv  = 0;
+int bms_cc_uah            = 0;
+int bms_cc_uah_per_soc    = 0;
+int bms_ibat_avg          = 0;
+int bms_rbatt_avg         = 128;  //DEFAULT_RBATT_MOHMS
+int bms_vbatt_avg_uv      = 0;
+int bms_oo_soc            = 0;
+//Eric Liu-
+
 #define BMS_CONTROL		0x224
 #define BMS_S1_DELAY		0x225
 #define BMS_OUTPUT0		0x230
@@ -97,6 +114,7 @@ struct pm8921_bms_chip {
 	struct single_row_lut	*fcc_temp_lut;
 	struct single_row_lut	*fcc_sf_lut;
 	struct pc_temp_ocv_lut	*pc_temp_ocv_lut;
+	struct pc_temp_ocv_lut	*soc_temp_ocv_lut;  //Eric Liu
 	struct sf_lut		*pc_sf_lut;
 	struct sf_lut		*rbatt_sf_lut;
 	int			delta_rbatt_mohm;
@@ -379,6 +397,8 @@ static int usb_chg_plugged_in(struct pm8921_bms_chip *chip)
 	int val = pm8921_is_usb_chg_plugged_in();
 
 	/* if the charger driver was not initialized, use the restart reason */
+	//Eric Liu+
+	#if 0
 	if (val == -EINVAL) {
 		if (pm8xxx_restart_reason(chip->dev->parent)
 				== PM8XXX_RESTART_CHG)
@@ -386,6 +406,29 @@ static int usb_chg_plugged_in(struct pm8921_bms_chip *chip)
 		else
 			val = 0;
 	}
+	#else
+  if (val == -EINVAL)
+  {
+    int rc, vbus;
+    struct pm8xxx_adc_chan_result result;
+    rc = pm8xxx_adc_read(CHANNEL_USBIN, &result);
+    if (rc)
+    {
+      MSG2("%s, val = 0, CHANNEL_USBIN read fail = %d", __func__,rc);
+      val = 0;
+    }
+    else
+    {
+      vbus = (int)result.physical / 1000;
+      if(vbus > 4500)
+        val = 1;
+      else
+        val = 0;
+      MSG2("%s, val = %d, vbus = %d",__func__,val,vbus);
+    }
+  }
+	#endif
+	//Eric Liu-
 
 	return val;
 }
@@ -783,6 +826,10 @@ int override_mode_simultaneous_battery_voltage_and_current(int *ibat_ua,
 	convert_vsense_to_uv(the_chip, vsense_raw, &vsense_uv);
 	*ibat_ua = div_s64((s64)vsense_uv * 1000000LL, the_chip->r_sense_uohm);
 
+  //*ibat_ua = *ibat_ua * 100 / 128;  //Carl Chang, 20130626, remove for calibration r_sense_uohm
+
+	bms_vbatt_avg_uv = *vbat_uv;  //Eric Liu
+
 	pr_debug("vsense_raw = 0x%x vbat_raw = 0x%x"
 			" ibat_ua = %d vbat_uv = %d\n",
 			(uint16_t)vsense_raw, (uint16_t)vbat_raw,
@@ -1057,6 +1104,991 @@ static int read_soc_params_raw(struct pm8921_bms_chip *chip,
 	pr_debug("cc_raw= 0x%x\n", raw->cc);
 	return 0;
 }
+
+//Eric Liu+
+static void very_low_voltage_check(struct pm8921_bms_chip *chip, int ibat_ua, int vbat_uv);
+static void calib_hkadc_check(struct pm8921_bms_chip *chip, int batt_temp);
+
+//cc_per_soc log, dynamic enabled while "batt_bms_ccpersoc_log" set 1
+#define DEBUG_CCPERSOC_LOG_SIZE 2048
+struct ccpersoc_data
+{
+  int start_ocv;
+  int end_ocv;
+  int start_soc;
+  int end_soc;
+  int ibat;
+  int temp;
+  int cc;
+  int new_cc_per_soc;
+  int old_cc_per_soc;
+  int mix_cc_per_soc;
+  int valid;
+  int sec;
+};
+struct ccpersoc_data *ccpersoc_log_ptr = 0;
+static int ccpersoc_log_index = 0;
+static void ccpersoc_log_push(
+  int start_ocv,
+  int end_ocv,
+  int start_soc,
+  int end_soc,
+  int ibat,
+  int temp,
+  int cc,
+  int new_cc_per_soc,
+  int old_cc_per_soc,
+  int mix_cc_per_soc,
+  int valid,
+  int sec)
+{
+  struct ccpersoc_data *p;
+  if(!ccpersoc_log_ptr)
+    return;
+  p = &ccpersoc_log_ptr[ccpersoc_log_index];
+  if(++ ccpersoc_log_index >= DEBUG_CCPERSOC_LOG_SIZE)
+    ccpersoc_log_index = 0;
+  p->start_ocv        = start_ocv;
+  p->end_ocv          = end_ocv;
+  p->start_soc        = start_soc;
+  p->end_soc          = end_soc;
+  p->temp             = temp;
+  p->ibat             = ibat;
+  p->cc               = cc;
+  p->new_cc_per_soc   = new_cc_per_soc;
+  p->old_cc_per_soc   = old_cc_per_soc;
+  p->mix_cc_per_soc   = mix_cc_per_soc;
+  p->valid            = valid;
+  p->sec              = sec;
+}
+static void ccpersoc_log_output(void)
+{
+  struct ccpersoc_data *p;
+  int i, ocv_delta, soc_delta, idx = ccpersoc_log_index, count = 0;
+  if(!ccpersoc_log_ptr)
+  {
+    MSG2("%s, not enabled!",__func__);
+    return;
+  }
+  MSG2("%s+",__func__);
+  MSG2("ocv1,ocv2(delta) soc.1,soc.2(soc._) ibat,tmp,cc______, new__,old__,mix__, v,sec____,count");
+  for(i=0; i<DEBUG_CCPERSOC_LOG_SIZE; i++)
+  {
+    p = &ccpersoc_log_ptr[idx];
+    if(++ idx >= DEBUG_CCPERSOC_LOG_SIZE)
+      idx = 0;
+    if(!p->start_ocv && !p->end_ocv)
+      continue;
+    ocv_delta = p->end_ocv - p->start_ocv;
+    soc_delta = p->end_soc - p->start_soc;
+    MSG2("%4d,%4d(%5d) %3d.%d,%3d.%d(%3d.%d) %4d,%3d,%8d, %5d,%5d,%5d, %d,%7d,%d",
+      p->start_ocv/1000, p->end_ocv/1000, ocv_delta/1000,
+      p->start_soc/10,  p->start_soc%10, p->end_soc/10, p->end_soc%10, soc_delta/10,
+      (soc_delta >= 0 ? soc_delta%10 : (-soc_delta)%10),
+      p->ibat, p->temp,
+      p->cc, (p->old_cc_per_soc != p->mix_cc_per_soc) ? p->new_cc_per_soc : 0,
+      p->old_cc_per_soc, p->mix_cc_per_soc, p->valid, p->sec, count ++);
+  }
+  MSG2("%s-",__func__);
+}
+static int ccpersoc_log_index_get(char *val, struct kernel_param *kp)
+{
+  int ret;
+  ccpersoc_log_output();
+  ret = sprintf(val, "%d", ccpersoc_log_index);
+  return ret;
+}
+module_param_call(ccpersoc_log_index, NULL, ccpersoc_log_index_get, &ccpersoc_log_index, 0444);
+
+#define CC_PER_SOC_MAX  23000
+#define CC_PER_SOC_MIN  13000
+#define CC_PER_SOC_NOW  20500 //Sapporo setting
+#define SOC_FLAT_REGION(soc)  ((soc >= 200) && (soc <= 450))  // 0.1%
+static struct batt_bms_data {
+  //bms raw
+  uint16_t  cc_msb_raw;
+  uint16_t  cc_lsb_raw;
+  uint16_t	lg_ocv_raw;
+  uint16_t	lg_ocv_raw_old; //old
+  uint16_t	vsense_raw;
+  uint16_t	vbatt_raw;
+  u8        reg_107;
+  //bms data
+  int		    cc;
+  int       lg_ocv_uv;
+  int       vsense_uv;
+  int       ibat_vsense_ma;
+  int       vbatt_uv;
+  int64_t   cc_uah;
+
+  //ocv algorithm
+  int       oo_soc;         // 0.1%
+
+  //cc algorithm
+  int64_t   cc_base_cc_uah;
+  int       cc_base_soc;    // 0.1%
+  int       cc_delta_soc;   // 0.1%
+  int       cc_soc;         // 0.1%
+
+  //cv algorithm
+  int       cv_base_soc;    // 0.1%
+  int       cv_base_ibat;
+  int       cv_soc;         // 0.1%
+
+  //cc adjust
+  int       cc_uah_per_soc;
+  int       cc_soc_adjust_high;
+  int       cc_soc_adjust_low;
+
+  int64_t   start_cc;
+  int       start_ocv;
+  int       start_soc;      // 0.1%
+  int       start_valid_ocv;
+  int       eoc_reached;
+
+  //other
+  int       usb_chg;
+  int       temp;           // 0.1'c
+  int       ibat_max_ua;    //used in pm8921_bms_get_current_max()
+  int       in_suspend;
+  int       last_soc;
+  int       last_soc_old;   //for log print
+  int       power_off_wait_count;
+  struct timespec time_now, time_old, time_soc_updated;
+  //old for middle
+  int       oo_soc_old[3];  //remember the oo soc, and pick the middle value
+  int       ibat_vs_old[3]; //remember the ibat vs, and pick the middle value
+} bms;
+
+int bms_cc_per_soc = CC_PER_SOC_NOW;
+static int batt_set_cc_per_soc(const char *val, struct kernel_param *kp)
+{
+  int ret, old = bms_cc_per_soc; //backup
+  //set value
+  ret = param_set_int(val, kp);
+  if(ret) //invalid string
+  {
+    MSG2("%s, Invalid string, ret = %d",__func__,ret);
+    goto exit;
+  }
+  //check range
+  if(bms_cc_per_soc > (CC_PER_SOC_MAX * 12 / 10) || //out of range
+    bms_cc_per_soc < (CC_PER_SOC_MIN * 10 / 12))
+  {
+    MSG2("%s, Invalid range = %d (%d ~ %d)",__func__,bms_cc_per_soc,CC_PER_SOC_MAX,CC_PER_SOC_MIN);
+    bms_cc_per_soc = old;
+    goto exit;
+  }
+  //update setting
+  MSG2("%s, %d -> %d",__func__,bms.cc_uah_per_soc,bms_cc_per_soc);
+  bms.cc_uah_per_soc = bms_cc_per_soc;
+
+  //the initial soc was calculated by CC_PER_SOC_NOW (not the value stored in FA)
+  //if the cc was high while booting (due to the phone reboot)
+  //the soc will shift a lot, due to it isn't using the correct cc_per_soc to calculate
+  //whenthe AP update the cc_per_soc (read from FA), we need to re-calculate the soc
+  if(bms.time_now.tv_sec <= 60 && abs(bms.cc_uah) > bms.cc_uah_per_soc) //AP should update in 60 sec
+  {
+    int64_t delta_cc_uah;
+    int64_t cc_base_cc_uah_old = bms.cc_base_cc_uah;
+    int cc_delta_soc_old = bms.cc_delta_soc;
+    int cc_soc_old = bms.cc_soc;
+    bms.cc_base_cc_uah = 0;
+    bms.cc_delta_soc = 0;
+    delta_cc_uah = bms.cc_uah;
+    while(1)
+    {
+      if(delta_cc_uah > bms.cc_uah_per_soc)       //dis-chg
+      {
+        delta_cc_uah -= bms.cc_uah_per_soc;
+        bms.cc_base_cc_uah += bms.cc_uah_per_soc;
+        bms.cc_delta_soc -= 10;
+      }
+      else if(delta_cc_uah < -bms.cc_uah_per_soc) //chg
+      {
+        delta_cc_uah += bms.cc_uah_per_soc;
+        bms.cc_base_cc_uah -= bms.cc_uah_per_soc;
+        bms.cc_delta_soc += 10;
+      }
+      else
+      {
+        break;
+      }
+    }
+    bms.cc_soc = bms.cc_base_soc + bms.cc_delta_soc;
+    MSG2("%s, cc_base_cc_uah=%lld->%lld, cc_delta_soc=%d.%d->%d.%d, cc_soc=%d.%d->%d.%d",__func__,
+      cc_base_cc_uah_old, bms.cc_base_cc_uah,
+      cc_delta_soc_old/10, (cc_delta_soc_old >= 0 ? cc_delta_soc_old%10 : (-cc_delta_soc_old)%10),
+      bms.cc_delta_soc/10, (bms.cc_delta_soc >= 0 ? bms.cc_delta_soc%10 : (-bms.cc_delta_soc)%10),
+      cc_soc_old/10, cc_soc_old%10, bms.cc_soc/10, bms.cc_soc%10);
+    if(bms.cc_soc >= 1010)
+    {
+      MSG2("## cc_soc %d.%d->100.0", bms.cc_soc/10, bms.cc_soc%10);
+      bms.cc_delta_soc = bms.cc_delta_soc + 1000 - bms.cc_soc;
+      bms.cc_soc = 1000;
+    }
+    else if(bms.cc_soc <= 0)
+    {
+      MSG2("## cc_soc %d.%d->0.9", bms.cc_soc/10, bms.cc_soc%10);
+      bms.cc_delta_soc = bms.cc_delta_soc + 9 - bms.cc_soc;
+      bms.cc_soc = 9;
+    }
+    if(bms.time_now.tv_sec <= 25) //in 25 sec, adjust soc without step to step
+    {
+      bms.last_soc = bms.cc_soc / 10;
+    }
+  }
+
+exit:
+  return 0;
+}
+static int batt_get_cc_per_soc(char *val, struct kernel_param *kp)
+{
+  int ret;
+  bms_cc_per_soc = bms.cc_uah_per_soc;
+  ret = sprintf(val, "%d", bms_cc_per_soc);
+  MSG2("%s, = %d, ret = %d",__func__,bms_cc_per_soc,ret);
+  return ret;
+}
+//Carl Chang+, 20130626, add for calibration r_sense_uohm
+#if 1
+int bms_r_sense_uohm = 10000; //Default 10mohm
+#define R_SENSE_UOHM_MAX  15000
+#define R_SENSE_UOHM_MIN  8000
+
+static int batt_set_r_sense_uohm(const char *val, struct kernel_param *kp)
+{
+  int ret, old = bms_r_sense_uohm; //backup
+  //set value
+  ret = param_set_int(val, kp);
+  if(ret) //invalid string
+  {
+    MSG2("%s, Invalid string, ret = %d",__func__,ret);
+    goto exit;
+  }
+  //check range
+  if(bms_r_sense_uohm > R_SENSE_UOHM_MAX || //out of range
+    bms_r_sense_uohm < R_SENSE_UOHM_MIN)
+  {
+    MSG2("%s, Invalid range = %d (%d ~ %d)",__func__,bms_r_sense_uohm,R_SENSE_UOHM_MAX,R_SENSE_UOHM_MIN);
+    bms_r_sense_uohm = old;
+    goto exit;
+  }
+  //update setting
+  MSG2("%s, %d -> %d",__func__,the_chip->r_sense_uohm,bms_r_sense_uohm);
+  the_chip->r_sense_uohm = bms_r_sense_uohm;
+  pm8921_set_max_battery_charge_current(chg_ibatmax_ma);
+
+
+exit:
+  return 0;
+}
+static int batt_get_r_sense_uohm(char *val, struct kernel_param *kp)
+{
+  int ret;
+  bms_r_sense_uohm = the_chip->r_sense_uohm;
+  ret = sprintf(val, "%d", bms_r_sense_uohm);
+  MSG2("%s, = %d, ret = %d",__func__,bms_r_sense_uohm,ret);
+  return ret;
+}
+module_param_call(bms_r_sense_uohm, batt_set_r_sense_uohm, batt_get_r_sense_uohm, &bms_r_sense_uohm, 0644); //for AP r/w
+#endif
+//Carl Chang-
+module_param_call(bms_cc_per_soc, batt_set_cc_per_soc, batt_get_cc_per_soc, &bms_cc_per_soc, 0644); //for AP r/w
+module_param(bms_last_good_ocv_uv, int, 0444);//for EMList read
+module_param(bms_cc_uah, int, 0444);          //for EMList read
+module_param(bms_cc_uah_per_soc, int, 0444);  //for EMList read
+module_param(bms_oo_soc, int, 0444);          //for EMList read
+static int batt_update_oo_soc_middle(int oo_soc)
+{
+  static u8 middle[] = {1,0,2,0,0,2,0,1};
+  int index = 0;
+  bms.oo_soc_old[2] = bms.oo_soc_old[1];
+  bms.oo_soc_old[1] = bms.oo_soc_old[0];
+  bms.oo_soc_old[0] = oo_soc;
+  if( bms.oo_soc_old[0] > bms.oo_soc_old[1] ) index += 4;
+  if( bms.oo_soc_old[1] > bms.oo_soc_old[2] ) index += 2;
+  if( bms.oo_soc_old[0] > bms.oo_soc_old[2] ) index ++;
+  if(bms.oo_soc_old[middle[index]])
+    return bms.oo_soc_old[middle[index]];
+  else
+    return oo_soc;
+}
+static int batt_update_ibat_vs_middle(int ibat_vs)
+{
+  static u8 middle[] = {1,0,2,0,0,2,0,1};
+  int index = 0;
+  bms.ibat_vs_old[2] = bms.ibat_vs_old[1];
+  bms.ibat_vs_old[1] = bms.ibat_vs_old[0];
+  bms.ibat_vs_old[0] = ibat_vs;
+  if( bms.ibat_vs_old[0] > bms.ibat_vs_old[1] ) index += 4;
+  if( bms.ibat_vs_old[1] > bms.ibat_vs_old[2] ) index += 2;
+  if( bms.ibat_vs_old[0] > bms.ibat_vs_old[2] ) index ++;
+  if(bms.ibat_vs_old[middle[index]])
+    return bms.ibat_vs_old[middle[index]];
+  else
+    return ibat_vs;
+}
+static void batt_read_bms_cc_and_update(struct pm8921_bms_chip *chip)
+{
+  int64_t cc_voltage_uv, cc_uvh;
+  mutex_lock(&chip->bms_output_lock);
+  pm_bms_lock_output_data(chip);
+  pm_bms_read_output_data(chip, CC_MSB, &bms.cc_msb_raw);     //CC
+  pm_bms_read_output_data(chip, CC_LSB, &bms.cc_lsb_raw);
+  pm_bms_unlock_output_data(chip);
+  mutex_unlock(&chip->bms_output_lock);
+  bms.cc = (bms.cc_msb_raw << 16) | bms.cc_lsb_raw;   //CC uah
+  cc_voltage_uv = cc_to_microvolt(chip, bms.cc);
+  cc_voltage_uv = pm8xxx_cc_adjust_for_gain(cc_voltage_uv);
+  cc_uvh = ccmicrovolt_to_uvh(cc_voltage_uv);
+  bms.cc_uah = div_s64(cc_uvh * 1000000LL, chip->r_sense_uohm);
+  bms.start_cc  = bms.cc_uah; //while ocv changed, it will reset cc, we need to backup it, in case to calculate delta cc
+}
+static uint16_t batt_read_bms_lgocv(struct pm8921_bms_chip *chip)
+{
+  uint16_t log_ocv_raw;
+  mutex_lock(&chip->bms_output_lock);
+  pm_bms_lock_output_data(chip);
+  pm_bms_read_output_data(chip, LAST_GOOD_OCV_VALUE, &log_ocv_raw); //LOCV
+  pm_bms_unlock_output_data(chip);
+  mutex_unlock(&chip->bms_output_lock);
+  return log_ocv_raw;
+}
+static void batt_read_bms_params_raw(struct pm8921_bms_chip *chip)
+{
+  mutex_lock(&chip->bms_output_lock);
+
+  pm_bms_lock_output_data(chip);
+  pm_bms_read_output_data(chip, CC_MSB, &bms.cc_msb_raw);     //CC
+  pm_bms_read_output_data(chip, CC_LSB, &bms.cc_lsb_raw);
+  pm_bms_read_output_data(chip, LAST_GOOD_OCV_VALUE, &bms.lg_ocv_raw);  //LOCV
+  pm_bms_unlock_output_data(chip);
+
+  pm8xxx_writeb(chip->dev->parent, BMS_S1_DELAY, 0x00); //why? 若沒跑這段, vbat的value不會更新
+  pm_bms_masked_write(chip, BMS_CONTROL, BMS_MODE_BIT | EN_VBAT_BIT, BMS_MODE_BIT | EN_VBAT_BIT);
+
+  if(bms.in_suspend)
+    mdelay(OVERRIDE_MODE_DELAY_MS); //when suspend, use mdelay
+  else
+    msleep(OVERRIDE_MODE_DELAY_MS);
+
+  pm_bms_lock_output_data(chip);
+  pm_bms_read_output_data(chip, VSENSE_AVG, &bms.vsense_raw);           //VSENSE
+  pm_bms_read_output_data(chip, VBATT_AVG, &bms.vbatt_raw);             //VBAT
+  pm_bms_unlock_output_data(chip);
+
+  pm_bms_masked_write(chip, BMS_CONTROL, BMS_MODE_BIT | EN_VBAT_BIT, 0);
+  pm8xxx_writeb(chip->dev->parent, BMS_S1_DELAY, 0x0B); //why?
+
+  mutex_unlock(&chip->bms_output_lock);
+}
+static void batt_calculate_bms(struct pm8921_bms_chip *chip)
+{
+  int64_t cc_voltage_uv, cc_uvh;
+  if(bms.lg_ocv_raw != bms.lg_ocv_raw_old)
+  {
+    convert_vbatt_raw_to_uv(chip, bms.usb_chg, bms.lg_ocv_raw, &bms.lg_ocv_uv); //LOCV uv
+    if(bms.time_old.tv_sec == 0)                                        //first time, check reg 107
+    {
+      pm8xxx_readb(chip->dev->parent, TEMP_SOC_STORAGE, &bms.reg_107);  //read status
+      MSG2("%s, reg_107=%02X, USB=%c, MBG=%c", __func__,
+        bms.reg_107,
+        bms.reg_107 & 0x02 ? 'Y':'N',                                   //bit1=1, shutdown with USB;  bit1=0, no USB
+        bms.reg_107 & 0x01 ? 'N':'Y');                                  //bit0=1, LGOCV in normal;    bit0=0, LGOCV with MBG issue
+      if((bms.reg_107 & 0x02) && (bms.reg_107 & 0x01))                  //bit1==1, with USB; bit0==1, LGOCV get in normal
+      {
+        pm8xxx_writeb(chip->dev->parent, TEMP_SOC_STORAGE, 0x01);       //bit0=1, LGOCV in normal
+      }
+      else  //without USB, or LGOCV with MBG
+      {
+        if(bms.lg_ocv_uv >= MBG_TRANSIENT_ERROR_UV)                     //uv > 15mv
+          bms.lg_ocv_uv -= MBG_TRANSIENT_ERROR_UV;                      //adjust uv
+        pm8xxx_writeb(chip->dev->parent, TEMP_SOC_STORAGE, 0x00);       //bit0=0, LGOCV with MBG issue
+      }
+    }
+  }
+  convert_vbatt_raw_to_uv(chip, bms.usb_chg, bms.vbatt_raw, &bms.vbatt_uv); //VBAT uv
+  convert_vsense_to_uv(chip, bms.vsense_raw, &bms.vsense_uv);               //VSENSE uv
+  bms.ibat_vsense_ma = (int)div_s64((s64)bms.vsense_uv * 1000LL, chip->r_sense_uohm); //ibat vs
+
+  //bms.ibat_vsense_ma = bms.ibat_vsense_ma * 100 /128; //Carl Chang, 20130626, remove for calibration r_sense_uohm
+
+  bms.cc = (bms.cc_msb_raw << 16) | bms.cc_lsb_raw;   //CC uah
+  cc_voltage_uv = cc_to_microvolt(chip, bms.cc);
+  cc_voltage_uv = pm8xxx_cc_adjust_for_gain(cc_voltage_uv);
+  cc_uvh = ccmicrovolt_to_uvh(cc_voltage_uv);
+  bms.cc_uah = div_s64(cc_uvh * 1000000LL, chip->r_sense_uohm);
+}
+static int batt_ocv_get_rbatt(struct pm8921_bms_chip *chip,
+  int tt, //temp  (0.1'c)
+  int vv, //vbat  (mv)
+  int ii) //ibat  (ma)
+{
+  int oo, pp, rr, rr_min, sf, i;
+  int ro[16];  //rbat old
+  if(chip->rbatt_sf_lut == NULL)
+    return chip->default_rbatt_mohm + chip->rconn_mohm;
+  rr_min = chip->default_rbatt_mohm * 32; // max is 32 * default 
+  rr = chip->default_rbatt_mohm;
+  for(i=0; i<ARRAY_SIZE(ro); i++)
+    ro[i] = 0;
+  for(i=0; i<ARRAY_SIZE(ro); i++)
+	{
+    oo = vv + (rr * ii / 1000); //mv + mohm * ma / 1000
+    pp = interpolate_pc(chip->pc_temp_ocv_lut, tt/10, oo);
+	  sf = interpolate_scalingfactor(chip->rbatt_sf_lut, tt/10, pp);
+	  rr = (chip->default_rbatt_mohm * sf) / 100;
+	  ro[i] = rr;
+	  if(i >= 1 && ro[i-1] == ro[i])  //rr repeat, stop and exit
+	  {
+	    if(tt >= 200)
+	      rr += chip->rconn_mohm;
+	    goto exit;
+	  }
+	  if(i >= 2 && ro[i-2] == ro[i])  //rr jump repeat, pick smaller one and exit
+	  {
+	    rr = ro[i] < ro[i-1] ? ro[i] : ro[i-1];
+	    if(tt >= 200)
+  	    rr += chip->rconn_mohm;
+	    goto exit;
+	  }
+	  rr_min = rr < rr_min ? rr : rr_min;
+  }
+  rr = rr_min;
+
+exit:
+  //limit the rbat range at cool temp, low vbat
+  if(bms.temp < 200 && bms.vbatt_uv < 3500000 && rr > (chip->default_rbatt_mohm * 2))
+  {
+    int rbat2 = chip->default_rbatt_mohm * 2;
+    if(bms.vbatt_uv > 3400000)
+    {
+      rr = rr - rbat2;
+      if(rr < 20000)  //be care of overflow
+        rr = rr * (bms.vbatt_uv - 3400000) / 100000 + rbat2;
+      else
+      {
+        rr = rr / 100;
+        rr = rr * (bms.vbatt_uv - 3400000) / 1000 + rbat2;
+      }
+	}
+  else
+    {
+      rr = rbat2;
+    }
+  }
+  return rr;
+}
+static void batt_calculate_cc_per_soc(int cc_per_soc, int ocv_delta)
+{
+  if(cc_per_soc > CC_PER_SOC_MAX || cc_per_soc < CC_PER_SOC_MIN ||  //out of range
+    ocv_delta < 100000 )
+    bms.cc_uah_per_soc = (bms.cc_uah_per_soc * 39 + cc_per_soc * 1) / 40;
+  else if(bms.start_soc <= 20 ||          //start_soc, start from very low soc?
+    SOC_FLAT_REGION(bms.start_soc) ||     //start_soc, in flat region?
+    SOC_FLAT_REGION(bms.cc_base_soc) )    //new soc, in flat region?
+    bms.cc_uah_per_soc = (bms.cc_uah_per_soc * 19 + cc_per_soc * 1) / 20;
+  else if(ocv_delta < 200000)
+    bms.cc_uah_per_soc = (bms.cc_uah_per_soc * 18 + cc_per_soc * 2) / 20;
+  else if(ocv_delta < 250000)
+    bms.cc_uah_per_soc = (bms.cc_uah_per_soc * 17 + cc_per_soc * 3) / 20;
+  else if(ocv_delta < 300000)
+    bms.cc_uah_per_soc = (bms.cc_uah_per_soc * 16 + cc_per_soc * 4) / 20;
+  else
+    bms.cc_uah_per_soc = (bms.cc_uah_per_soc * 15 + cc_per_soc * 5) / 20;
+}
+static int batt_calculate_soc(struct pm8921_bms_chip *chip)
+{
+	struct pm8xxx_adc_chan_result result;
+	struct timespec time_delta;
+	int delta_sec_tenth;
+  int ibat_vs, lg_ocv_changed = 0;
+  int ocv_uv, rbat, ibat_vs_middle, oo_soc_middle;
+  int final_soc;
+  int cc_comp = 0;  //compensate
+
+  //============================================
+  //  Read status
+  //============================================
+  bms.usb_chg = usb_chg_plugged_in(chip);   //get usb status
+  batt_read_bms_params_raw(chip);           //read bms
+  batt_calculate_bms(chip);                 //calculate bms
+  ibat_vs = bms.ibat_vsense_ma;
+	pm8xxx_adc_read(chip->batt_temp_channel, &result);  //read temp
+	bms.temp = (int)result.physical;
+  get_monotonic_boottime(&bms.time_now);    //read time
+  if(bms.lg_ocv_raw_old != bms.lg_ocv_raw)  //last good ocv change?
+    lg_ocv_changed = 1;
+  if(bms.time_old.tv_sec == 0)              //first time
+  {
+    delta_sec_tenth = 0;
+  }
+  else
+  {
+    time_delta = timespec_sub(bms.time_now, bms.time_old);  //i = cc / time
+    delta_sec_tenth = (int)(time_delta.tv_sec * 10 + time_delta.tv_nsec / 100000000);
+  }
+
+  //============================================
+  //  ibat middle, ocv
+  //============================================
+  {
+    //middle
+    ibat_vs_middle = batt_update_ibat_vs_middle(ibat_vs);
+
+    //ocv
+    rbat    = batt_ocv_get_rbatt(chip, bms.temp, bms.vbatt_uv/1000, ibat_vs);
+    ocv_uv  = bms.vbatt_uv + rbat * ibat_vs;
+
+    //while abnormal, use estimate lgocv and reset_cc
+    if(lg_ocv_changed && abs(ocv_uv - bms.lg_ocv_uv) > 400000)  //lgocv abnormal (delta > 400mV)
+    {
+      MSG2("## LGOCV = %07d -> %07d, CC = %lld -> 0, warm = %d #### ==== ####",
+        bms.lg_ocv_uv, ocv_uv, bms.cc_uah, is_warm_restart(chip));
+      bms.lg_ocv_uv = ocv_uv;
+      reset_cc(chip);
+      bms.cc = 0;
+      bms.cc_uah = 0;
+    }
+
+    bms.oo_soc = interpolate_soc(chip->soc_temp_ocv_lut, bms.temp/10, ocv_uv/1000);
+    oo_soc_middle = batt_update_oo_soc_middle(bms.oo_soc);
+    bms.ibat_max_ua = 1000 * (ocv_uv - chip->v_cutoff * 1000);  //be care of overflow
+    bms.ibat_max_ua = (rbat != 0) ? (bms.ibat_max_ua / rbat) :
+      (bms.ibat_max_ua / (chip->default_rbatt_mohm + chip->rconn_mohm));
+  }
+
+  //============================================
+  //  CC algorithm
+  //============================================
+  {
+    int64_t delta_cc_uah;
+    if(lg_ocv_changed)
+    {
+      bms.cc_base_cc_uah = 0;
+      bms.cc_base_soc = interpolate_soc(chip->soc_temp_ocv_lut, bms.temp/10, bms.lg_ocv_uv/1000);
+      bms.cc_delta_soc = 0;
+      if(bms.time_old.tv_sec) //after first time, whenever lgocv updated, write reg 107
+        pm8xxx_writeb(chip->dev->parent, TEMP_SOC_STORAGE, 0x01); //bit0=1, LGOCV in normal
+    }
+    if(bms.eoc_reached)
+    {
+      MSG2("## cc_soc %d.%d -> 100.0 (EOC)", bms.cc_soc/10, bms.cc_soc%10);
+      bms.cc_base_cc_uah = bms.cc_uah;
+      bms.cc_base_soc = 1000;
+      bms.cc_delta_soc = 0;
+      bms.cc_soc = 1000;
+      bms.lg_ocv_uv = chip->max_voltage_uv;
+      //bms.start_valid_ocv = 0;
+      goto exit_cc_algorithm;
+    }
+    delta_cc_uah = bms.cc_uah - bms.cc_base_cc_uah;
+    while(1)
+    {
+      int cc_tenth = bms.cc_uah_per_soc / 10;
+      if(delta_cc_uah > cc_tenth)       //dis-chg
+      {
+        delta_cc_uah -= cc_tenth;
+        bms.cc_base_cc_uah += cc_tenth;
+        bms.cc_delta_soc --;
+      }
+      else if(delta_cc_uah < -cc_tenth) //chg
+      {
+        delta_cc_uah += cc_tenth;
+        bms.cc_base_cc_uah -= cc_tenth;
+        bms.cc_delta_soc ++;
+      }
+      else
+      {
+        break;
+      }
+    }
+    bms.cc_soc = bms.cc_base_soc + bms.cc_delta_soc;
+    //check cc_soc in correct range
+    if(bms.cc_soc >= 1010)
+    {
+      MSG3("## cc_soc %d.%d->100.0", bms.cc_soc/10, bms.cc_soc%10);
+      bms.cc_delta_soc = bms.cc_delta_soc + 1000 - bms.cc_soc;
+      bms.cc_soc = 1000;
+    }
+    else if(bms.cc_soc <= 0)
+    {
+      MSG3("## cc_soc %d.%d->0.9", bms.cc_soc/10, bms.cc_soc%10);
+      bms.cc_delta_soc = bms.cc_delta_soc + 9 - bms.cc_soc;
+      bms.cc_soc = 9;
+    }
+
+    //============================
+    //  adjust CC, base on oo_soc
+    //============================
+    if((abs(bms.cc_soc - oo_soc_middle) < 10) ||  //soc delta < 1.0
+      ibat_vs_middle == 0 || delta_sec_tenth == 0 ||
+      (bms.temp >= 200 && SOC_FLAT_REGION(oo_soc_middle)) ||  //avoid of flat region
+      bms.cc_soc == 1000)      
+    {
+      cc_comp = 0;
+    }
+    else if(ibat_vs_middle > 0) //dis-chg
+    {
+      int delta = bms.cc_soc - oo_soc_middle;
+      int delta_max, div;
+      if(bms.temp >= 200)   //compensate max 10%  (normal)
+        delta_max = 100;
+      else
+        delta_max = 300;    //compensate max 30%  (cool)
+      if(delta > delta_max)    //limit the adjust range
+        delta = delta_max;
+      else if(delta < -delta_max)
+        delta = -delta_max;
+      if(abs(bms.cc_soc - oo_soc_middle) > 100)   //speed up the compensate speed, pick the smaller one
+      {
+        if(bms.temp >= 200)
+          div = (bms.cc_soc + oo_soc_middle) / 2;     //normal
+        else
+          div = (bms.cc_soc + oo_soc_middle * 3) / 4; //cool
+      }
+      else if(bms.cc_soc > oo_soc_middle)
+        div = oo_soc_middle;
+      else
+        div = bms.cc_soc;
+      if(div > 0) //protect from div 0
+        cc_comp = delta * ibat_vs_middle * delta_sec_tenth / (36 * div);
+      else
+        cc_comp = 0;
+    }
+    else  //chg
+    {
+      cc_comp = 0;
+    }
+    bms.cc_base_cc_uah -= cc_comp;
+  }
+exit_cc_algorithm:
+
+  //============================================
+  //  cc_per_soc algorithm
+  //============================================
+  {
+    //cc_per_soc log
+    if(batt_bms_ccpersoc_log && !ccpersoc_log_ptr)  //if log enabled, and buffer is not allocateed
+    {
+      int size = sizeof(struct ccpersoc_data) * DEBUG_CCPERSOC_LOG_SIZE;
+      ccpersoc_log_ptr = kzalloc(size, GFP_KERNEL);
+      MSG2("%s, ccpersoc_log_ptr = 0x%8X (size=%d)",__func__,(int)ccpersoc_log_ptr, size);
+    }
+    //==========================
+    //  1, first time, simple update the parameter
+    //==========================
+    if(bms.time_old.tv_sec == 0)
+    {
+      //while booting, if the cc is big, we take it as non valid ocv
+      if(abs(bms.cc_uah) > bms.cc_uah_per_soc)
+        bms.start_valid_ocv = 0;
+      else if(bms.cc_uah == 0)    // 0 means, we are using estimate lgocv and reset_cc
+        bms.start_valid_ocv = 0;
+      else
+        bms.start_valid_ocv = 1;
+      MSG2("## CC_ADJUST ## ocv=%4d soc=%d.%d (%lld) cps=%5d valid=%d (LGOCV Start)",
+        bms.lg_ocv_uv/1000, bms.cc_base_soc/10, bms.cc_base_soc%10, bms.cc_uah, bms.cc_uah_per_soc,
+        bms.start_valid_ocv);
+      ccpersoc_log_push(bms.lg_ocv_uv, bms.lg_ocv_uv, bms.cc_base_soc, bms.cc_base_soc, ibat_vs, bms.temp,
+        bms.cc_uah, bms.cc_uah_per_soc, bms.cc_uah_per_soc, bms.cc_uah_per_soc, bms.start_valid_ocv, (int)bms.time_now.tv_sec);
+    }
+    //==========================
+    //  2, eoc reached
+    //==========================
+    else if(bms.eoc_reached)
+    {
+      int64_t cc_per_soc_64;
+      int cc_per_soc = 0;
+      int soc_delta = abs(bms.start_soc - bms.oo_soc);
+      int ocv_delta = abs(bms.start_ocv - ocv_uv);
+      int cc_old = bms.cc_uah_per_soc;
+      if(soc_delta)   //be care of div 0
+      {
+        cc_per_soc_64 = div_s64(abs(bms.start_cc)*10, soc_delta);
+        cc_per_soc = (int)cc_per_soc_64;
+      }
+      //================
+      //  2.1, not valid
+      //================
+      if(!bms.start_valid_ocv ||                //ocv wasn't valid
+        ocv_delta < 75000 || soc_delta < 50)    //delta too small
+      {
+        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d (EOC Bypass)",
+          bms.start_ocv/1000, ocv_uv/1000, ocv_delta/1000,
+          bms.start_soc/10, bms.start_soc%10, bms.oo_soc/10, bms.oo_soc%10,
+          bms.start_cc, soc_delta/10, soc_delta%10, cc_per_soc,
+          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv);
+      }
+      //================
+      //  2.2, valid
+      //================
+      else
+      {
+        batt_calculate_cc_per_soc(cc_per_soc, ocv_delta); //weighting
+        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d (EOC)",
+          bms.start_ocv/1000, ocv_uv/1000, ocv_delta/1000,
+          bms.start_soc/10, bms.start_soc%10, bms.oo_soc/10, bms.oo_soc%10,
+          bms.start_cc, soc_delta/10, soc_delta%10, cc_per_soc,
+          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv);
+      }
+      ccpersoc_log_push(bms.start_ocv, ocv_uv, bms.start_soc, bms.oo_soc, ibat_vs, bms.temp,
+        bms.start_cc, cc_per_soc, cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv, (int)bms.time_now.tv_sec);
+      bms.eoc_reached = 0;
+      bms.start_valid_ocv = 0;
+    }
+    //==========================
+    //  3, lgocv changed
+    //==========================
+    else if(lg_ocv_changed)
+    {
+      int64_t cc_per_soc_64;
+      int cc_per_soc = 0;
+      int soc_delta = abs(bms.start_soc - bms.cc_base_soc);
+      int ocv_delta = abs(bms.start_ocv - bms.lg_ocv_uv);
+      int cc_old = bms.cc_uah_per_soc;
+      if(soc_delta)   //be care of div 0
+      {
+        cc_per_soc_64 = div_s64(abs(bms.start_cc)*10, soc_delta);
+        cc_per_soc = (int)cc_per_soc_64;
+      }
+      //================
+      //  3.1, not valid
+      //================
+      if(!bms.start_valid_ocv ||                //ocv wasn't valid
+        ocv_delta < 40000 || soc_delta < 50)    //delta too small
+      {
+        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d (LGOCV Bypass)",
+          bms.start_ocv/1000, bms.lg_ocv_uv/1000, ocv_delta/1000,
+          bms.start_soc/10, bms.start_soc%10, bms.cc_base_soc/10, bms.cc_base_soc%10,
+          bms.start_cc, soc_delta/10, soc_delta%10, cc_per_soc,
+          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv);
+      }
+      //================
+      //  3.2, valid
+      //================
+      else
+      {
+        batt_calculate_cc_per_soc(cc_per_soc, ocv_delta); //weighting
+        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d (LGOCV)",
+          bms.start_ocv/1000, bms.lg_ocv_uv/1000, ocv_delta/1000,
+          bms.start_soc/10, bms.start_soc%10, bms.cc_base_soc/10, bms.cc_base_soc%10,
+          bms.start_cc, soc_delta/10, soc_delta%10, cc_per_soc,
+          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv);
+      }
+      ccpersoc_log_push(bms.start_ocv, bms.lg_ocv_uv, bms.start_soc, bms.cc_base_soc, ibat_vs, bms.temp,
+        bms.start_cc, cc_per_soc, cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv, (int)bms.time_now.tv_sec);
+      bms.start_valid_ocv = 1;
+    }
+    bms.start_cc  = bms.cc_uah; //while ocv changed, it will reset cc, we need to backup it, in case to calculate delta cc
+    bms.start_ocv = bms.lg_ocv_uv;
+    bms.start_soc = bms.cc_base_soc;
+  }
+
+  //============================================
+  //  Constant Voltage
+  //============================================
+  if(bms.cv_base_soc <= 0)    //not CV mode yet
+  {
+    if(bms.usb_chg && ibat_vs_middle < 0 && //enter CV mode ?
+      bms.vbatt_uv >= chip->max_voltage_uv &&
+      bms.cc_soc <= 990)
+    {
+      if(bms.cv_base_ibat > ibat_vs_middle) //get largest charge current
+        bms.cv_base_ibat = ibat_vs_middle;
+      else
+      {
+        int delta_ibat;
+        if(ibat_vs_middle > -500)           // 500mA charging
+          delta_ibat = (- bms.cv_base_ibat - 50)/32;
+        else                                //large current charging
+          delta_ibat = (- bms.cv_base_ibat - 100)/32;
+        if(ibat_vs_middle > (bms.cv_base_ibat + delta_ibat))  //ibat is smaller than largest current?
+          bms.cv_base_soc --;               //decrease flag as a wait count
+        else
+          bms.cv_base_soc = 0;              //clear flag
+      }
+      if(bms.cv_base_soc < -2)              //flag smaller than -2, switch to CV mode
+      {
+        bms.cv_base_soc = bms.cc_soc;
+        bms.cv_soc =  bms.cc_soc;
+        bms.cv_base_ibat = ibat_vs_middle;  //use the middle as reference current
+        MSG2("## CV Mode enter, soc=%d.%d, ibat=%4d", bms.cv_base_soc/10, bms.cv_base_soc%10, bms.cv_base_ibat);
+      }
+    }
+    else
+    {
+      bms.cv_base_soc = 0;                  //clear flag
+      bms.cv_base_ibat = 0;
+    }
+  }
+  else    //already cv mode
+  {
+    if(!bms.usb_chg || ibat_vs_middle >= 0 || //leave CV mode ?
+      bms.vbatt_uv < chip->max_voltage_uv ||
+      bms.cv_soc >= 1000)
+    {
+      MSG2("## CV Mode leave, soc=%d.%d, ibat=%4d, cc_soc=%d.%d->%d.%d",
+        bms.cv_base_soc/10, bms.cv_base_soc%10, bms.cv_base_ibat,
+        bms.cc_soc/10, bms.cc_soc%10, bms.cv_soc/10, bms.cv_soc%10);
+      bms.cc_soc = bms.cv_soc;              //while leave CV mode, set cc soc to cv soc, let the soc alignment
+      bms.cc_base_cc_uah = bms.cc_uah;
+      bms.cc_delta_soc = bms.cc_soc - bms.cc_base_soc;
+
+      bms.cv_base_soc = 0;                  //clear flag
+      bms.cv_base_ibat = 0;
+      bms.cv_soc = 0;
+    }
+    else  //get cv soc
+    {
+      int ibat_term = -(chip->chg_term_ua/1000 + 5);
+      if(bms.cv_base_ibat < ibat_term)
+        bms.cv_soc = linear_interpolate(bms.cv_base_soc, bms.cv_base_ibat, 1000, ibat_term, ibat_vs_middle);
+      else
+        bms.cv_soc = 1000;
+      bms.cv_soc = min(1000, max(0, bms.cv_soc));
+    }
+  }
+
+  //============================================
+  //  final soc
+  //============================================
+  if((bms.vbatt_uv >= 3400000) ||
+    (bms.vbatt_uv >= 3370000 && ibat_vs_middle > 500) ||
+    (bms.vbatt_uv >= 3330000 && ibat_vs_middle > 800) )
+  {
+    if(bms.cv_base_soc > 0)     //CV mode active?
+      final_soc = bms.cv_soc / 10;
+    else if(bms.cc_soc <= 9)    //CC 0.9%, but vbat still high, keep phone on
+      final_soc = 1;
+    else if(bms.cc_soc > 994)   //CC 99.4%
+      final_soc = 100;
+    else
+      final_soc = bms.cc_soc / 10;
+    bms.power_off_wait_count = 0;
+  }
+  else
+  {
+    bms.power_off_wait_count ++;
+    if(bms.power_off_wait_count <= 1)
+    {
+      if(bms.cc_soc > 40)       //at least, show 4% warning
+        final_soc = 4;
+      else if(bms.cc_soc <= 9)  //CC 0.9%, still wait the power off count
+        final_soc = 1;
+      else
+        final_soc = bms.cc_soc / 10;
+    }
+    else if(bms.power_off_wait_count == 2)
+      final_soc = 1;            //ready to power off
+    else if(bms.power_off_wait_count > 2)
+      final_soc = 0;            //bingo, shut down the phone
+  }
+
+  //============================================
+  //  soc step update (check the time wait)
+  //============================================
+  if(bms.time_soc_updated.tv_sec == 0)    //first time, no soc update wait
+  {
+    bms.last_soc = final_soc;
+    bms.time_soc_updated = bms.time_now;
+  }
+  else if(bms.last_soc != final_soc)      //soc changed
+  {
+    int delta_sec_updated;
+    time_delta = timespec_sub(bms.time_now, bms.time_soc_updated);
+    delta_sec_updated = time_delta.tv_sec;
+    if(final_soc <= 4)  // when the soc is low, ignore the time wait
+    {
+      if((!bms.usb_chg && final_soc < bms.last_soc) ||      //soc --, no usb
+        (ibat_vs_middle > 0 && final_soc < bms.last_soc) )  //soc --, dis-chg (ibat > 0)
+      {
+        bms.last_soc = final_soc;
+        bms.time_soc_updated = bms.time_now;
+      }
+      else if(ibat_vs_middle <= 0 && final_soc > bms.last_soc)  //soc ++, chg (ibat < 0)
+      {
+        bms.last_soc = final_soc;
+        bms.time_soc_updated = bms.time_now;
+      }
+    }
+    else
+    if((delta_sec_updated >= 30  && abs(ibat_vs_middle) >= 900) ||  // 30s, 900mA, soc update
+      (delta_sec_updated >= 40  && abs(ibat_vs_middle) >= 700) ||   // 40s, 800mA, soc update
+      (delta_sec_updated >= 50) ||                                  // 50s, soc update
+      (bms.temp < 200 && delta_sec_updated >= 10 && abs(bms.last_soc - final_soc) >= 5) ) // cool, 10s, delta >= 5, soc update
+    {
+      if((!bms.usb_chg && final_soc < bms.last_soc) ||      //soc --, no usb
+        (ibat_vs_middle > 0 && final_soc < bms.last_soc) )  //soc --, dis-chg (ibat > 0)
+      {
+        bms.last_soc --;
+        bms.time_soc_updated = bms.time_now;
+      }
+      else if(ibat_vs_middle <= 0 && final_soc > bms.last_soc)  //soc ++, chg (ibat < 0)
+      {
+        bms.last_soc ++;
+        bms.time_soc_updated = bms.time_now;
+      }
+    }
+  }
+
+  if(lg_ocv_changed || bms.time_old.tv_sec == 0 || bms.last_soc_old != bms.last_soc)
+  {
+    if(lg_ocv_changed || bms.time_old.tv_sec == 0)
+    MSG2("Soc(fin,_cc._,_oo._(avg._)_cv._)vbatt(ocv_)(i_vs,_avg)temp,cc_uah___,comp_(c_soc)rbat,Lgocv,sec");
+    MSG2("%3d(%3d,%3d.%d,%3d.%d(%3d.%d)%3d.%d)v%4d(%4d)(%4d,%4d)t%3d,c%8lld,%5d(%5d)r%3d,L%4d,s%2d",
+      bms.last_soc, final_soc, bms.cc_soc/10, bms.cc_soc%10,
+      bms.oo_soc/10, bms.oo_soc%10, oo_soc_middle/10, oo_soc_middle%10, bms.cv_soc/10, bms.cv_soc%10,
+      bms.vbatt_uv/1000, ocv_uv/1000,
+      ibat_vs, ibat_vs_middle, bms.temp,
+      bms.cc_uah, cc_comp, bms.cc_uah_per_soc,
+      rbat,
+      bms.lg_ocv_uv/1000,
+      delta_sec_tenth/10);
+  }
+  else
+  {
+    MSG3("%3d(%3d,%3d.%d,%3d.%d(%3d.%d)%3d.%d)v%4d(%4d)(%4d,%4d)t%3d,c%8lld,%5d(%5d)r%3d,L%4d,s%2d",
+      bms.last_soc, final_soc, bms.cc_soc/10, bms.cc_soc%10,
+      bms.oo_soc/10, bms.oo_soc%10, oo_soc_middle/10, oo_soc_middle%10, bms.cv_soc/10, bms.cv_soc%10,
+      bms.vbatt_uv/1000, ocv_uv/1000,
+      ibat_vs, ibat_vs_middle, bms.temp,
+      bms.cc_uah, cc_comp, bms.cc_uah_per_soc,
+      rbat,
+      bms.lg_ocv_uv/1000,
+      delta_sec_tenth/10);
+  }
+  //============================================
+  //  remember old
+  //============================================
+  bms.lg_ocv_raw_old = bms.lg_ocv_raw;  //remember old ocv
+  bms.time_old       = bms.time_now;    //remember old time
+
+  //for charger log
+  bms_last_good_ocv_uv  = bms.lg_ocv_uv;
+  bms_cc_uah            = bms.cc_uah;
+  bms_cc_uah_per_soc    = bms.cc_uah_per_soc;
+  bms_ibat_avg          = ibat_vs_middle;
+  bms_rbatt_avg         = rbat;
+  bms_vbatt_avg_uv      = bms.vbatt_uv;
+  bms_oo_soc            = bms.oo_soc;
+
+  very_low_voltage_check(chip, ibat_vs * 1000, bms.vbatt_uv); //for alarm wakelock hold/release
+
+  calib_hkadc_check(chip, bms.temp);    //if time or temp changed, calib hkadc
+
+  //============================================
+  //  schedule next work
+  //============================================
+  if(bms.vbatt_uv < 3450000)
+    schedule_delayed_work(&chip->calculate_soc_delayed_work, HZ * 5);
+  else
+    schedule_delayed_work(&chip->calculate_soc_delayed_work, HZ * 10);
+  bms.last_soc_old = bms.last_soc;
+  return bms.last_soc;
+}
+//Eric Liu-
 
 static int get_rbatt(struct pm8921_bms_chip *chip, int soc_rbatt, int batt_temp)
 {
@@ -1580,6 +2612,7 @@ int pm8921_bms_get_simultaneous_battery_voltage_and_current(int *ibat_ua,
 			pr_err("adc vbat failed err = %d\n", rc);
 			return rc;
 		}
+		bms_vbatt_avg_uv = *vbat_uv;  //Eric Liu
 		rc = pm8921_bms_get_battery_current(ibat_ua);
 		if (rc < 0) {
 			pr_err("bms ibat failed err = %d\n", rc);
@@ -1755,6 +2788,7 @@ static void very_low_voltage_check(struct pm8921_bms_chip *chip,
 	if (vbat_uv <= (chip->v_cutoff + 20) * 1000
 			&& !chip->low_voltage_wake_lock_held) {
 		pr_debug("voltage = %d low holding wakelock\n", vbat_uv);
+		MSG2("%s, LOW_VOLTAGE_WAKE_LOCK = 1, vbat = %4dmV",__func__,vbat_uv/1000);  //Eric Liu
 		wake_lock(&chip->low_voltage_wake_lock);
 		chip->low_voltage_wake_lock_held = 1;
 		chip->soc_calc_period = chip->low_voltage_calc_ms;
@@ -1763,6 +2797,7 @@ static void very_low_voltage_check(struct pm8921_bms_chip *chip,
 	if (vbat_uv > (chip->v_cutoff + 20) * 1000
 			&& chip->low_voltage_wake_lock_held) {
 		pr_debug("voltage = %d releasing wakelock\n", vbat_uv);
+		MSG2("%s, LOW_VOLTAGE_WAKE_LOCK = 0, vbat = %4dmV",__func__,vbat_uv/1000);  //Eric Liu
 		chip->low_voltage_wake_lock_held = 0;
 		wake_unlock(&chip->low_voltage_wake_lock);
 		chip->soc_calc_period = chip->normal_voltage_calc_ms;
@@ -1946,6 +2981,8 @@ static void read_shutdown_soc_and_iavg(struct pm8921_bms_chip *chip)
 {
 	int rc;
 	u8 temp;
+
+	return; //Eric Liu
 
 	rc = pm8xxx_readb(chip->dev->parent, TEMP_IAVG_STORAGE, &temp);
 	if (rc) {
@@ -2332,6 +3369,18 @@ static void calculate_soc_work(struct work_struct *work)
 				struct pm8921_bms_chip,
 				calculate_soc_delayed_work);
 
+
+	//Eric Liu+
+	{
+		int soc;
+		soc = batt_calculate_soc(chip);
+		if (soc != calculated_soc)
+			update_power_supply(chip);
+		calculated_soc = soc;
+		return;
+	}
+	//Eric Liu-
+
 	recalculate_soc(chip);
 	schedule_delayed_work(&chip->calculate_soc_delayed_work,
 			round_jiffies_relative(msecs_to_jiffies
@@ -2349,6 +3398,8 @@ static int report_state_of_charge(struct pm8921_bms_chip *chip)
 		pr_debug("Returning Fake SOC = %d%%\n", bms_fake_battery);
 		return bms_fake_battery;
 	}
+
+	return soc; //Eric Liu
 
 	get_batt_temp(chip, &batt_temp);
 
@@ -2410,6 +3461,8 @@ void pm8921_bms_invalidate_shutdown_soc(void)
 {
 	int calculate_soc = 0;
 	struct pm8921_bms_chip *chip = the_chip;
+
+  return; //Eric Liu
 
 	pr_debug("Invalidating shutdown soc - the battery was removed\n");
 	if (shutdown_soc_invalid)
@@ -2491,6 +3544,9 @@ int pm8921_bms_get_battery_current(int *result_ua)
 	pr_debug("vsense=%duV\n", vsense_uv);
 	/* cast for signed division */
 	*result_ua = div_s64(vsense_uv * 1000000LL, the_chip->r_sense_uohm);
+
+	//*result_ua = 	*result_ua * 100 / 128; //Carl Chang, 20130626, remove for calibration r_sense_uohm
+
 	pr_debug("ibat=%duA\n", *result_ua);
 
 error_vsense:
@@ -2515,7 +3571,10 @@ int pm8921_bms_get_current_max(void)
 		pr_err("called before initialization\n");
 		return -EINVAL;
 	}
-	return the_chip->imax_ua;
+
+	return bms.ibat_max_ua; //Eric Liu
+
+	//return the_chip->imax_ua;
 }
 EXPORT_SYMBOL_GPL(pm8921_bms_get_current_max);
 
@@ -2528,14 +3587,37 @@ int pm8921_bms_get_fcc(void)
 		return -EINVAL;
 	}
 
+	//return bms.cc_uah_per_soc*100;  //Eric Liu //todo
+
 	get_batt_temp(the_chip, &batt_temp);
 	return calculate_fcc_uah(the_chip, batt_temp, last_chargecycles);
 }
 EXPORT_SYMBOL_GPL(pm8921_bms_get_fcc);
+
+int pm8921_bms_get_factory_fcc(void)
+{
+	if (!the_chip) {
+		pr_err("called before initialization\n");
+		return -EINVAL;
+	}
+
+	return the_chip->fcc * 1000;
+}
+EXPORT_SYMBOL_GPL(pm8921_bms_get_factory_fcc);
+
 void pm8921_bms_charging_began(void)
 {
 	struct pm8921_soc_params raw;
 	int batt_temp;
+
+	//Eric Liu+
+	{
+	  bms.eoc_reached = 0;
+		pm_bms_masked_write(the_chip, BMS_TOLERANCES,
+				IBAT_TOL_MASK, IBAT_TOL_DEFAULT);
+		return;
+	}
+	//Eric Liu-
 
 	get_batt_temp(the_chip, &batt_temp);
 
@@ -2568,6 +3650,20 @@ void pm8921_bms_charging_end(int is_battery_full)
 
 	if (the_chip == NULL)
 		return;
+
+	//Eric Liu+
+	{
+	  if(is_battery_full)
+	  {
+	    MSG2("%s, eoc_reached",__func__);
+	    bms.eoc_reached = 1;
+	    flush_delayed_work(&the_chip->calculate_soc_delayed_work);
+	  }
+		pm_bms_masked_write(the_chip, BMS_TOLERANCES,
+					IBAT_TOL_MASK, IBAT_TOL_NOCHG);
+		return;
+	}
+	//Eric Liu-
 
 	get_batt_temp(the_chip, &batt_temp);
 
@@ -2848,6 +3944,12 @@ static int set_battery_data(struct pm8921_bms_chip *chip)
 		goto desay;
 	else if (chip->batt_type == BATT_PALLADIUM)
 		goto palladium;
+	else if (chip->batt_type == BATT_BOSTON)
+		goto boston;
+	//Carl Chang+, add SBJ battery data
+	else if (chip->batt_type == BATT_SBJ)
+		goto sbj;
+	//Carl Chang-
 
 	battery_id = read_battery_id(chip);
 	if (battery_id < 0) {
@@ -2886,6 +3988,30 @@ desay:
 		chip->default_rbatt_mohm = desay_5200_data.default_rbatt_mohm;
 		chip->delta_rbatt_mohm = desay_5200_data.delta_rbatt_mohm;
 		return 0;
+boston:
+		MSG2("%s, Boston",__func__);
+		chip->fcc                 = boston_2000_data.fcc;
+		chip->fcc_temp_lut        = boston_2000_data.fcc_temp_lut;
+		chip->fcc_sf_lut          = boston_2000_data.fcc_sf_lut;
+		chip->pc_temp_ocv_lut     = boston_2000_data.pc_temp_ocv_lut;
+		chip->soc_temp_ocv_lut    = boston_2000_data.soc_temp_ocv_lut;
+		chip->rbatt_sf_lut        = boston_2000_data.rbatt_sf_lut;
+		chip->default_rbatt_mohm  = boston_2000_data.default_rbatt_mohm;
+		chip->delta_rbatt_mohm    = boston_2000_data.delta_rbatt_mohm;
+		return 0;
+//Carl Chang+, add SBJ battery data
+sbj:
+		MSG2("%s, SBJ",__func__);
+		chip->fcc                 = sbj_2100_data.fcc;
+		chip->fcc_temp_lut        = sbj_2100_data.fcc_temp_lut;
+		chip->fcc_sf_lut          = sbj_2100_data.fcc_sf_lut;
+		chip->pc_temp_ocv_lut     = sbj_2100_data.pc_temp_ocv_lut;
+		chip->soc_temp_ocv_lut    = sbj_2100_data.soc_temp_ocv_lut;
+		chip->rbatt_sf_lut        = sbj_2100_data.rbatt_sf_lut;
+		chip->default_rbatt_mohm  = sbj_2100_data.default_rbatt_mohm;
+		chip->delta_rbatt_mohm    = sbj_2100_data.delta_rbatt_mohm;
+		return 0;
+//Carl Chang-
 }
 
 enum bms_request_operation {
@@ -3206,6 +4332,67 @@ restore_sbi_config:
 	return 0;
 }
 
+//Eric Liu+
+static void batt_bms_shutdown(struct platform_device *pdev)
+{
+  int usb = usb_chg_plugged_in(the_chip);
+  u8 reg_old, reg_new;
+  pm8xxx_readb(the_chip->dev->parent, TEMP_SOC_STORAGE, &reg_old);
+  if(usb)
+    reg_new = reg_old | 0x02; //with USB
+  else
+    reg_new = 0;  //no USB, clear all
+  pm8xxx_writeb(the_chip->dev->parent, TEMP_SOC_STORAGE, reg_new);
+  MSG2("%s, USB=%d, reg_107=%02X->%02X ###",__func__, usb, reg_old, reg_new);
+}
+static int batt_bms_suspend(struct device *dev)
+{
+  //struct timespec now;
+  //get_monotonic_boottime(&now);
+  //MSG2("%s, now=%03ld.%02ld",__func__,now.tv_sec/60,now.tv_sec%60);
+  bms.in_suspend = 1;
+  cancel_delayed_work_sync(&the_chip->calculate_soc_delayed_work);
+  batt_read_bms_cc_and_update(the_chip);
+  return 0;
+}
+static int batt_bms_resume(struct device *dev)
+{
+  int delta_sec, update_soc_now = 0, soc;
+  uint16_t lg_ocv_raw;
+  struct timespec time_now, time_delta;
+  get_monotonic_boottime(&time_now);
+  time_delta = timespec_sub(time_now, bms.time_old);
+  delta_sec = (int)time_delta.tv_sec;
+  MSG3("%s+, now=%03ld.%02ld, delta_sec=%03d",__func__,time_now.tv_sec/60,time_now.tv_sec%60,delta_sec);
+  if(delta_sec > 300) //soc have not beed update for 5 mins
+  {
+    update_soc_now = 1;
+  }
+  else  //check last good ocv
+  {
+    lg_ocv_raw = batt_read_bms_lgocv(the_chip);
+    if(lg_ocv_raw != bms.lg_ocv_raw_old)  //last good ocv changed?
+      update_soc_now = 1;
+  }
+  if(update_soc_now)
+  {
+    soc = batt_calculate_soc(the_chip);
+    if (soc != calculated_soc)
+      update_power_supply(the_chip);
+  	calculated_soc = soc;
+  }
+  else
+    schedule_delayed_work(&the_chip->calculate_soc_delayed_work, HZ*5);
+  bms.in_suspend = 0;
+  MSG3("%s-",__func__);
+  return 0;
+}
+static const struct dev_pm_ops batt_bms_pm_ops = {
+	.suspend	= batt_bms_suspend,
+	.resume		= batt_bms_resume,
+};
+//Eric Liu-
+
 static int __devinit pm8921_bms_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -3213,6 +4400,8 @@ static int __devinit pm8921_bms_probe(struct platform_device *pdev)
 	struct pm8921_bms_chip *chip;
 	const struct pm8921_bms_platform_data *pdata
 				= pdev->dev.platform_data;
+
+	MSG2("BootLog, +%s",__func__);  //Eric Liu
 
 	if (!pdata) {
 		pr_err("missing platform data\n");
@@ -3302,6 +4491,25 @@ static int __devinit pm8921_bms_probe(struct platform_device *pdev)
 
 	wake_lock_init(&chip->low_voltage_wake_lock,
 			WAKE_LOCK_SUSPEND, "pm8921_bms_low");
+	bms_r_sense_uohm = chip->r_sense_uohm; //Carl Chang, bms_r_sense_uohm initial value follow board file
+  //Eric Liu+
+  {
+    memset(&bms,0,sizeof(bms));
+    bms.cc_uah_per_soc = bms_cc_per_soc;
+    bms.cv_base_soc = 0;
+
+    //SR 1072282, increase LGOCV update chance
+    //BMS S1 to S3 count, modify from 128 to 32
+    pm8xxx_writeb(chip->dev->parent, 0x228, 0xB4);
+
+    if(batt_bms_ccpersoc_log && !ccpersoc_log_ptr)  //if log enabled, and buffer is not allocateed
+    {
+      int size = sizeof(struct ccpersoc_data) * DEBUG_CCPERSOC_LOG_SIZE;
+      ccpersoc_log_ptr = kzalloc(size, GFP_KERNEL);
+      MSG2("%s, ccpersoc_log_ptr = 0x%8X (size=%d)",__func__,(int)ccpersoc_log_ptr, size);
+    }
+  }
+  //Eric Liu-
 
 	rc = pm8921_bms_hw_init(chip);
 	if (rc) {
@@ -3348,6 +4556,8 @@ static int __devinit pm8921_bms_probe(struct platform_device *pdev)
 	else
 		pr_info("Unable to read battery voltage at boot\n");
 
+	MSG2("BootLog, -%s",__func__);  //Eric Liu
+
 	return 0;
 
 free_irqs:
@@ -3372,6 +4582,8 @@ static int __devexit pm8921_bms_remove(struct platform_device *pdev)
 	return 0;
 }
 
+//Eric Liu+, we don't use that
+#if 0
 static int pm8921_bms_resume(struct device *dev)
 {
 	int rc;
@@ -3400,14 +4612,20 @@ static int pm8921_bms_resume(struct device *dev)
 static const struct dev_pm_ops pm8921_bms_pm_ops = {
 	.resume		= pm8921_bms_resume,
 };
+#endif
+//Eric Liu-
 
 static struct platform_driver pm8921_bms_driver = {
 	.probe	= pm8921_bms_probe,
 	.remove	= __devexit_p(pm8921_bms_remove),
+	.shutdown = batt_bms_shutdown,  //Eric Liu
 	.driver	= {
 		.name	= PM8921_BMS_DEV_NAME,
 		.owner	= THIS_MODULE,
-		.pm	= &pm8921_bms_pm_ops,
+		//Eric Liu+
+		//.pm	= &pm8921_bms_pm_ops,
+		.pm	= &batt_bms_pm_ops,
+		//Eric Liu-
 	},
 };
 
@@ -3421,7 +4639,7 @@ static void __exit pm8921_bms_exit(void)
 	platform_driver_unregister(&pm8921_bms_driver);
 }
 
-late_initcall(pm8921_bms_init);
+device_initcall(pm8921_bms_init);
 module_exit(pm8921_bms_exit);
 
 MODULE_LICENSE("GPL v2");

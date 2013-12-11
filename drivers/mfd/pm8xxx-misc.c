@@ -910,6 +910,7 @@ int pm8xxx_hard_reset_config(enum pm8xxx_pon_config config)
 
 	/* Loop over all attached PMICs and call specific functions for them. */
 	list_for_each_entry(chip, &pm8xxx_misc_chips, link) {
+		printk ("%s %d %d\n", __func__, __LINE__, chip->version);
 		switch (chip->version) {
 		case PM8XXX_VERSION_8018:
 			__pm8xxx_hard_reset_config(chip, config,
@@ -925,6 +926,9 @@ int pm8xxx_hard_reset_config(enum pm8xxx_pon_config config)
 			break;
 		case PM8XXX_VERSION_8921:
 		case PM8XXX_VERSION_8917:
+		/* Bright Lee, 20130114, add Boston hw config for hot key log { */
+		case PM8XXX_VERSION_8038:
+		/* } Bright Lee, 20130114 */
 			__pm8xxx_hard_reset_config(chip, config,
 				REG_PM8921_PON_CNTL_4, REG_PM8921_PON_CNTL_5);
 			break;

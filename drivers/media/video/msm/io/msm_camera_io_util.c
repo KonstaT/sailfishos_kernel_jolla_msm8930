@@ -19,6 +19,12 @@
 #include <mach/camera.h>
 #include <mach/gpiomux.h>
 
+//Eric Liu+
+#include "msm_sensor_common.h"
+#include <mach/hwid.h>
+#define MSG2(format, arg...)  printk(KERN_INFO "[CAM]" format "\n", ## arg)
+//Eric Liu-
+
 #define BUFF_SIZE_128 128
 static int gpio_ref_count;
 
@@ -169,6 +175,14 @@ cam_clk_get_err:
 	return rc;
 }
 
+//Eric Liu+
+static const char * get_vreg_name(int i)
+{
+  const char *vreg[] = {"CAM_VDIG", "CAM_VIO ", "CAM_VANA", "CAM_VAF ", "CAM_VANA_EXT", "CAM_UNKNOWN"};
+  return i <= CAM_VANA_EXT ? vreg[i] : vreg[CAM_VANA_EXT + 1];
+}
+//Eric Liu-
+
 int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 		int num_vreg, enum msm_camera_vreg_name_t *vreg_seq,
 		int num_vreg_seq, struct regulator **reg_ptr, int config)
@@ -176,6 +190,15 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 	int i = 0, j = 0;
 	int rc = 0;
 	struct camera_vreg_t *curr_vreg;
+
+  //Eric Liu+
+  //defined in each sensor driver file: sensor_i2c_addr
+  //mt9m114 = 0x90
+  //ov8825  = 0x6C
+  //imx091  = 0x34
+  //struct i2c_client *client = container_of(dev, struct i2c_client, dev);
+  //MSG2("%s+, %d, addr=0x%X",__func__,config,client->addr);  //Eric Liu
+  //Eric Liu-
 
 	if (num_vreg_seq > num_vreg) {
 		pr_err("%s:%d vreg sequence invalid\n", __func__, __LINE__);
@@ -192,6 +215,19 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 					continue;
 			} else
 				j = i;
+
+      //Eric Liu+
+      //MSG2("%s, On,  %s",__func__,get_vreg_name(j));
+      if(j == CAM_VANA_EXT)
+      {
+        rc = gpio_request(35, "cam_vana"); // 2.8v
+        if(rc < 0)
+          MSG2("%s, gpio_request, cam_vana, fail = %d",__func__,rc);
+        gpio_direction_output(35, 0);
+        continue;
+      }
+      //Eric Liu-
+
 			curr_vreg = &cam_vreg[j];
 			reg_ptr[j] = regulator_get(dev,
 				curr_vreg->reg_name);
@@ -235,6 +271,19 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 					continue;
 			} else
 				j = i;
+
+      //Eric Liu+
+      //MSG2("%s, Off, %s",__func__,get_vreg_name(j));
+      if(j == CAM_VANA_EXT)
+      {
+        rc = gpio_direction_input(35);  // 2.8v release
+        if(rc < 0)
+          MSG2("%s, gpio_direction_input, cam_vana, fail = %d",__func__,rc);
+        gpio_free(35);
+        continue;
+      }
+      //Eric Liu-
+
 			curr_vreg = &cam_vreg[j];
 			if (reg_ptr[j]) {
 				if (curr_vreg->type == REG_LDO) {
@@ -251,6 +300,7 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 			}
 		}
 	}
+	//MSG2("%s-, rc=0",__func__);
 	return 0;
 
 vreg_unconfig:
@@ -277,6 +327,7 @@ vreg_get_fail:
 		curr_vreg = &cam_vreg[j];
 		goto vreg_unconfig;
 	}
+	//MSG2("%s-, rc=-19(ENODEV?",__func__);
 	return -ENODEV;
 }
 
@@ -285,6 +336,15 @@ int msm_camera_enable_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 		int num_vreg_seq, struct regulator **reg_ptr, int enable)
 {
 	int i = 0, j = 0, rc = 0;
+
+  //Eric Liu+
+  //defined in each sensor driver file: sensor_i2c_addr
+  //mt9m114 = 0x90
+  //ov8825  = 0x6C
+  //imx091  = 0x34
+  //struct i2c_client *client = container_of(dev, struct i2c_client, dev);
+  //MSG2("%s+, %d, addr=0x%X",__func__,enable,client->addr);
+  //Eric Liu-
 
 	if (num_vreg_seq > num_vreg) {
 		pr_err("%s:%d vreg sequence invalid\n", __func__, __LINE__);
@@ -306,6 +366,20 @@ int msm_camera_enable_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 					__func__, cam_vreg[j].reg_name);
 				goto disable_vreg;
 			}
+
+      //Eric Liu+
+      MSG2("%s, On,  %s, %dms",__func__,get_vreg_name(j),cam_vreg[j].delay);
+      if(j == CAM_VANA_EXT)
+      {
+        gpio_set_value_cansleep(35, 1);       //second, l9, 2.8v
+        if (cam_vreg[j].delay > 20)
+          msleep(cam_vreg[j].delay);
+        else if (cam_vreg[j].delay)
+          usleep_range(cam_vreg[j].delay * 1000, (cam_vreg[j].delay * 1000) + 1000);
+        continue;
+      }
+      //Eric Liu-
+
 			rc = regulator_enable(reg_ptr[j]);
 			if (rc < 0) {
 				pr_err("%s: %s enable failed\n",
@@ -326,6 +400,20 @@ int msm_camera_enable_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 					continue;
 			} else
 				j = i;
+
+      //Eric Liu+
+      MSG2("%s, Off, %s, %dms",__func__,get_vreg_name(j),cam_vreg[j].delay);
+      if(j == CAM_VANA_EXT)
+      {
+        gpio_set_value_cansleep(35, 0);       //second, l9, 2.8v
+        if (cam_vreg[j].delay > 20)
+          msleep(cam_vreg[j].delay);
+        else if (cam_vreg[j].delay)
+          usleep_range(cam_vreg[j].delay * 1000, (cam_vreg[j].delay * 1000) + 1000);
+        continue;
+      }
+      //Eric Liu-
+
 			regulator_disable(reg_ptr[j]);
 			if (cam_vreg[j].delay > 20)
 				msleep(cam_vreg[j].delay);
@@ -334,6 +422,7 @@ int msm_camera_enable_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 					(cam_vreg[j].delay * 1000) + 1000);
 		}
 	}
+	//MSG2("%s-, rc=%d",__func__,rc);
 	return rc;
 disable_vreg:
 	for (i--; i >= 0; i--) {
@@ -350,6 +439,7 @@ disable_vreg:
 			usleep_range(cam_vreg[j].delay * 1000,
 				(cam_vreg[j].delay * 1000) + 1000);
 	}
+	//MSG2("%s-, rc=%d",__func__,rc);
 	return rc;
 }
 

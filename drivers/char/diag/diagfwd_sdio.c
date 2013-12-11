@@ -94,7 +94,7 @@ static int diag_sdio_close(void)
 
 static void diag_close_sdio_work_fn(struct work_struct *work)
 {
-	pr_debug("diag: sdio close called\n");
+	diag_printk(1,"diag:%s sdio close called\n",__func__);
 	if (sdio_close(driver->sdio_ch))
 		pr_err("diag: could not close SDIO channel\n");
 	else
@@ -115,7 +115,7 @@ int diagfwd_connect_sdio(void)
 		err = sdio_open("SDIO_DIAG", &driver->sdio_ch, driver,
 							 diag_sdio_notify);
 		if (err)
-			pr_info("diag: could not open SDIO channel\n");
+			pr_err("diag: could not open SDIO channel\n");
 		else
 			pr_info("diag: opened SDIO channel\n");
 	} else {
@@ -182,7 +182,7 @@ static int diag_sdio_probe(struct platform_device *pdev)
 	err = sdio_open("SDIO_DIAG", &driver->sdio_ch, driver,
 							 diag_sdio_notify);
 	if (err)
-		printk(KERN_INFO "DIAG could not open SDIO channel");
+		diag_printk(0, "DIAG:%s could not open SDIO channel",__func__);
 	else {
 		printk(KERN_INFO "DIAG opened SDIO channel");
 		queue_work(driver->diag_sdio_wq, &(driver->diag_read_mdm_work));
@@ -193,7 +193,7 @@ static int diag_sdio_probe(struct platform_device *pdev)
 
 static int diag_sdio_remove(struct platform_device *pdev)
 {
-	pr_debug("\n diag: sdio remove called");
+	diag_printk(1,"\n diag:%s sdio remove called",__func__);
 	/* Disable SDIO channel to prevent further read/write */
 	driver->sdio_ch = NULL;
 	return 0;
@@ -263,7 +263,7 @@ void diagfwd_sdio_init(void)
 	INIT_WORK(&(driver->diag_close_sdio_work), diag_close_sdio_work_fn);
 	ret = platform_driver_register(&msm_sdio_ch_driver);
 	if (ret)
-		printk(KERN_INFO "DIAG could not register SDIO device");
+		diag_printk(0, "DIAG:%s could not register SDIO device\n",__func__);
 	else
 		printk(KERN_INFO "DIAG registered SDIO device");
 

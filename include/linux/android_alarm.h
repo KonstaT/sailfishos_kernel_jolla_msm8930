@@ -63,6 +63,12 @@ struct alarm {
 	ktime_t			softexpires;
 	ktime_t			expires;
 	void			(*function)(struct alarm *);
+	/* Terry Cheng, 20130508, Add evil alarm detection {*/
+	#ifdef CONFIG_EVIL_ALARM_DETECTION
+	unsigned int 	count; 
+	struct timespec  pre_trigger_time; 
+	#endif //CONFIG_EVIL_ALARM_DETECTION
+	/* } Terry Cheng, 20130508, Add evil alarm detection */
 };
 
 void alarm_init(struct alarm *alarm,

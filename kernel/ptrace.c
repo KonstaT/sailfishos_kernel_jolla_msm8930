@@ -25,6 +25,24 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/cn_proc.h>
 
+/* Terry Cheng, 20130503, Add wake up debuggerd to prevent it wait some task cannot normally stop {*/
+static struct task_struct *wait_task = NULL;
+static unsigned int ptrace_attach_timeout = 0; 
+static void ptrace_attach_timeout_func(unsigned long data);
+static DEFINE_TIMER(ptrace_attach_wd, ptrace_attach_timeout_func, 0, 0);
+static void ptrace_attach_timeout_func(unsigned long data)
+{
+	pr_err(" %s \n", __FUNCTION__);
+	if (wait_task) {
+		pr_err("thread %s call stack\n", wait_task->comm);
+		show_stack(wait_task, NULL);
+		ptrace_attach_timeout=1;
+		pr_err("wake up wait task\n");
+		wait_task->jobctl &= ~JOBCTL_TRAPPING;
+		wake_up_bit(&wait_task->jobctl, JOBCTL_TRAPPING_BIT);
+	} 
+}
+/* } Terry Cheng, 20130503, Add wake up debuggerd to prevent it wait some task cannot normally stop */
 
 static int ptrace_trapping_sleep_fn(void *flags)
 {
@@ -322,9 +340,21 @@ unlock_creds:
 	mutex_unlock(&task->signal->cred_guard_mutex);
 out:
 	if (!retval) {
+		/* Terry Cheng, 20130503, Add wake up debuggerd to prevent it wait some task cannot normally stop {*/	
+		wait_task = task;
+		mod_timer(&ptrace_attach_wd, jiffies + 10*HZ);
 		wait_on_bit(&task->jobctl, JOBCTL_TRAPPING_BIT,
 			    ptrace_trapping_sleep_fn, TASK_UNINTERRUPTIBLE);
-		proc_ptrace_connector(task, PTRACE_ATTACH);
+
+		if (ptrace_attach_timeout){
+			ptrace_attach_timeout = 0;
+			retval = -EIO;
+		}else{
+			proc_ptrace_connector(task, PTRACE_ATTACH);
+		}	
+		del_timer_sync(&ptrace_attach_wd);
+		wait_task = NULL;
+		/* } Terry Cheng, 20130503, Add wake up debuggerd to prevent it wait some task cannot normally stop */
 	}
 
 	return retval;

@@ -47,6 +47,11 @@
 #include "smd_private.h"
 #include "modem_notifier.h"
 
+/* 20120420, Terry Cheng, Show modem crash err log and flush err log to file {*/
+#include <linux/syscalls.h>
+/* } 20120420, Terry Cheng, Show modem crash err log and flush err log to file */
+
+
 #if defined(CONFIG_ARCH_QSD8X50) || defined(CONFIG_ARCH_MSM8X60) \
 	|| defined(CONFIG_ARCH_MSM8960) || defined(CONFIG_ARCH_FSM9XXX) \
 	|| defined(CONFIG_ARCH_MSM9615)	|| defined(CONFIG_ARCH_APQ8064)
@@ -188,9 +193,14 @@ enum {
 	SMSM_APPS_DEM_I = 3,
 };
 
-static int msm_smd_debug_mask;
+/* Terry Cheng, extern the smd debug mask for pm8x60 to show wake up reason {*/
+int msm_smd_debug_mask;
+/* }Terry Cheng, extern the smd debug mask for pm8x60 to show wake up reason */
 module_param_named(debug_mask, msm_smd_debug_mask,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+
+//20121102, Terry Cheng, Show which process read QMI message when resume from suspsned
+int is_show_who_read_smd_pkt_read = 0;
 
 #if defined(CONFIG_MSM_SMD_DEBUG)
 #define SMD_DBG(x...) do {				\
@@ -212,10 +222,15 @@ module_param_named(debug_mask, msm_smd_debug_mask,
 		if (msm_smd_debug_mask & MSM_SMSM_INFO) \
 			printk(KERN_INFO x);		\
 	} while (0)
+/* 20121102, Terry Cheng, Show which process read QMI message when resume from suspsned {*/
 #define SMx_POWER_INFO(x...) do {				\
 		if (msm_smd_debug_mask & MSM_SMx_POWER_INFO) \
+		   {   \
 			printk(KERN_INFO x);		\
+			is_show_who_read_smd_pkt_read = 1; \
+		   }   \
 	} while (0)
+/* } 20121102, Terry Cheng, Show which process read QMI message when resume from suspsned */
 #else
 #define SMD_DBG(x...) do { } while (0)
 #define SMSM_DBG(x...) do { } while (0)
@@ -574,23 +589,118 @@ static struct notifier_block smsm_pm_nb = {
 	.priority = 0,
 };
 
+/* 20121127, Terry Cheng, Show modem crash err log and flush err log to file {*/
+#define MAX_COPY_PATH_LEN	100		//Terry Cheng, 20120117, Use define size to replace hot code
+#define MAX_SMD_SAVE_TIMES	3
+#define SMDLOG_SAVED_PATH "/var/systemlog/smem_err"
+#define SMDLOG_NAME "smem_err.log"
+#define SMDLOG_FILE SMDLOG_SAVED_PATH "/" SMDLOG_NAME
+static int smd_file_exist(char *path)
+{
+	struct file *filp = NULL;
+	filp = filp_open(path, O_RDWR, S_IRWXU);
+	if (!IS_ERR(filp)) {
+		SMD_DBG("pm_move_oldfile %s exist\n", path);
+		filp_close(filp, NULL);
+		return 1;
+	}
+	SMD_DBG("pm_move_oldfile %s\n", path);
+	return 0;
+}
+static void smd_move_oldfile(void)
+{
+	char old_path[MAX_COPY_PATH_LEN];
+	char new_path[MAX_COPY_PATH_LEN];
+	int i;
+
+	for (i=MAX_SMD_SAVE_TIMES; i>=0; i--) {	
+		snprintf(old_path, MAX_COPY_PATH_LEN, "%s/%s.%d", SMDLOG_SAVED_PATH, SMDLOG_NAME, i);
+		snprintf(new_path, MAX_COPY_PATH_LEN, "%s/%s.%d", SMDLOG_SAVED_PATH, SMDLOG_NAME, i+1);
+		if (smd_file_exist(old_path)) {
+			if (i==MAX_SMD_SAVE_TIMES) 
+				sys_unlink(old_path);
+			else 
+				sys_rename(old_path, new_path);
+		}
+	}
+	snprintf(old_path, MAX_COPY_PATH_LEN, "%s/%s",  SMDLOG_SAVED_PATH, SMDLOG_NAME);
+	snprintf(new_path, MAX_COPY_PATH_LEN, "%s/%s.0", SMDLOG_SAVED_PATH, SMDLOG_NAME);
+	if (smd_file_exist(old_path)) sys_rename(old_path, new_path);
+	sys_sync();	//It could move file when rebooting so we must do sync to make sure the modification is syncto emmc. 
+}
+
+
+/* Bright Lee, 20130507, copy smem err log to reserved area { */
+#ifdef CONFIG_BUILD_FACTORY
+#include <asm/setup.h>
+static char __iomem *smem_err_buffer = NULL;
+static uint32_t smem_err_log_start, smem_err_log_size;
+
+static int __init parse_tag_mem_smem_err(const struct tag *tag)
+{
+	smem_err_log_start = tag->u.mem.start;
+	smem_err_log_size = tag->u.mem.size;
+	printk ("%s start: 0x%x, size: 0x%X\n", __func__, smem_err_log_start, smem_err_log_size);
+	return 0;
+}
+
+__tagtable(ATAG_MEM_SMEM_LOG, parse_tag_mem_smem_err);
+#endif
+/* } Bright Lee, 20130507 */
+
+
 void smd_diag(void)
 {
 	char *x;
 	int size;
+	//Save log to file 	
+	mm_segment_t oldfs;
+	struct file *filp = NULL;
+	unsigned long long offset = 0;
 
 	x = smem_find(ID_DIAG_ERR_MSG, SZ_DIAG_ERR_MSG);
 	if (x != 0) {
 		x[SZ_DIAG_ERR_MSG - 1] = 0;
-		SMD_INFO("smem: DIAG '%s'\n", x);
+		pr_err("smem: DIAG '%s'\n", x);
 	}
 
 	x = smem_get_entry(SMEM_ERR_CRASH_LOG, &size);
 	if (x != 0) {
 		x[size - 1] = 0;
-		pr_err("smem: CRASH LOG\n'%s'\n", x);
+		pr_err("smem: CRASH LOG '%s'\n", x);
 	}
+
+	/* Bright Lee, 20130507, copy smem err log to reserved area { */
+	#ifdef CONFIG_BUILD_FACTORY
+	smem_err_buffer = ioremap(smem_err_log_start, smem_err_log_size);
+	strncpy (smem_err_buffer, x, smem_err_log_size);
+	#endif
+	/* } Bright Lee, 20130507 */
+
+	if(!x)
+		return;
+
+	oldfs = get_fs();
+	set_fs(get_ds());
+	//Move old file
+	smd_move_oldfile();
+	//Save log to file 	
+	filp = filp_open(SMDLOG_FILE, O_CREAT|O_RDWR, S_IRWXU|S_IRWXO);
+	if ( IS_ERR(filp) ) {
+		set_fs(oldfs);
+		pr_err("%s: Open file failed\n", __func__);
+	}
+	else {
+		size = strlen(x);		
+		vfs_write(filp, x, size, &offset);
+		vfs_fsync(filp, 0);
+		sys_sync();
+		filp_close(filp, NULL);
+		set_fs(oldfs);
+	}		
 }
+/* } 20121127, Terry Cheng, Show modem crash err log and flush err log to file */
+
 
 
 static void handle_modem_crash(void)
@@ -1335,6 +1445,10 @@ static void handle_smd_irq(struct list_head *list, void (*notify)(void))
 
 static irqreturn_t smd_modem_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_MODEM].smd_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMD Int Modem->Apps\n");
 	++interrupt_stats[SMD_MODEM].smd_in_count;
 	handle_smd_irq(&smd_ch_list_modem, notify_modem_smd);
@@ -1344,6 +1458,10 @@ static irqreturn_t smd_modem_irq_handler(int irq, void *data)
 
 static irqreturn_t smd_dsp_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_Q6].smd_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMD Int LPASS->Apps\n");
 	++interrupt_stats[SMD_Q6].smd_in_count;
 	handle_smd_irq(&smd_ch_list_dsp, notify_dsp_smd);
@@ -1353,6 +1471,10 @@ static irqreturn_t smd_dsp_irq_handler(int irq, void *data)
 
 static irqreturn_t smd_dsps_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_DSPS].smd_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMD Int DSPS->Apps\n");
 	++interrupt_stats[SMD_DSPS].smd_in_count;
 	handle_smd_irq(&smd_ch_list_dsps, notify_dsps_smd);
@@ -1362,6 +1484,10 @@ static irqreturn_t smd_dsps_irq_handler(int irq, void *data)
 
 static irqreturn_t smd_wcnss_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_WCNSS].smd_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMD Int WCNSS->Apps\n");
 	++interrupt_stats[SMD_WCNSS].smd_in_count;
 	handle_smd_irq(&smd_ch_list_wcnss, notify_wcnss_smd);
@@ -1371,6 +1497,10 @@ static irqreturn_t smd_wcnss_irq_handler(int irq, void *data)
 
 static irqreturn_t smd_rpm_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_RPM].smd_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMD Int RPM->Apps\n");
 	++interrupt_stats[SMD_RPM].smd_in_count;
 	handle_smd_irq(&smd_ch_list_rpm, notify_rpm_smd);
@@ -2766,6 +2896,10 @@ static irqreturn_t smsm_irq_handler(int irq, void *data)
 
 static irqreturn_t smsm_modem_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_MODEM].smsm_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMSM Int Modem->Apps\n");
 	++interrupt_stats[SMD_MODEM].smsm_in_count;
 	return smsm_irq_handler(irq, data);
@@ -2773,6 +2907,10 @@ static irqreturn_t smsm_modem_irq_handler(int irq, void *data)
 
 static irqreturn_t smsm_dsp_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_Q6].smsm_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMSM Int LPASS->Apps\n");
 	++interrupt_stats[SMD_Q6].smsm_in_count;
 	return smsm_irq_handler(irq, data);
@@ -2780,6 +2918,10 @@ static irqreturn_t smsm_dsp_irq_handler(int irq, void *data)
 
 static irqreturn_t smsm_dsps_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_DSPS].smsm_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMSM Int DSPS->Apps\n");
 	++interrupt_stats[SMD_DSPS].smsm_in_count;
 	return smsm_irq_handler(irq, data);
@@ -2787,6 +2929,10 @@ static irqreturn_t smsm_dsps_irq_handler(int irq, void *data)
 
 static irqreturn_t smsm_wcnss_irq_handler(int irq, void *data)
 {
+	/* Terry Cheng, 20121226, Save smd and smsm wakeup app statistics {*/
+	if (is_show_who_read_smd_pkt_read)
+		++interrupt_stats[SMD_WCNSS].smsm_in_count_resume;	
+	/* } Terry Cheng, 20121226, Save smd and smsm wakeup app statistics */
 	SMx_POWER_INFO("SMSM Int WCNSS->Apps\n");
 	++interrupt_stats[SMD_WCNSS].smsm_in_count;
 	return smsm_irq_handler(irq, data);

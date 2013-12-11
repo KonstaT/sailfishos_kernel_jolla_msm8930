@@ -16,6 +16,11 @@
 
 #define WCD9XXX_CHIP_ID_TAIKO 0x00000201
 
+extern unsigned int SND_DLL;
+#undef pr_debug
+#define pr_debug(fmt,args...) do { if(SND_DLL > 0) printk(fmt,##args); } while(0);
+
+
 struct wcd9xxx_slim_sch_rx {
 	u32 sph;
 	u32 ch_num;

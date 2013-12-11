@@ -19,6 +19,9 @@
 
 #define VALID_FLAGS (SYNC_FILE_RANGE_WAIT_BEFORE|SYNC_FILE_RANGE_WRITE| \
 			SYNC_FILE_RANGE_WAIT_AFTER)
+/* Terry Cheng, 20130320, Patch to check do_fsync time whether too long {*/
+#define CONFIG_DEBUG_FS_SYNC_TIMEOUT
+/* } Terry Cheng, 20130320, Patch to check do_fsync time whether too long */
 
 /*
  * Do the filesystem syncing work. For simple filesystems
@@ -184,6 +187,21 @@ int vfs_fsync(struct file *file, int datasync)
 }
 EXPORT_SYMBOL(vfs_fsync);
 
+/* Terry Cheng, 20130320, Patch to check do_fsync time whether too long {*/
+#ifdef CONFIG_DEBUG_FS_SYNC_TIMEOUT
+static void do_fsync_timeout(unsigned long data);
+static DEFINE_TIMER(do_fsync_wd, do_fsync_timeout, 0, 0);
+static struct task_struct *do_fsync_task = NULL;
+static void do_fsync_timeout(unsigned long data)
+{
+	printk(KERN_ERR " do_fsync_timeout \n");
+	if (do_fsync_task) {
+		show_stack(do_fsync_task, NULL);
+		pr_info("VFS: %s pid:%d(%s)(parent:%d/%s)  fsync %s.\n", __func__, do_fsync_task->pid, do_fsync_task->comm, do_fsync_task->parent->pid, do_fsync_task->parent->comm, (char *)data);
+	}
+}
+#endif	//CONFIG_DEBUG_FS_SYNC_TIMEOUT
+/* Terry Cheng, 20130320, Patch to check do_fsync time whether too long {*/
 static int do_fsync(unsigned int fd, int datasync)
 {
 	struct file *file;
@@ -191,8 +209,22 @@ static int do_fsync(unsigned int fd, int datasync)
 
 	file = fget(fd);
 	if (file) {
+/* Terry Cheng, 20130320, Patch to check do_fsync time whether too long {*/
+#ifdef CONFIG_DEBUG_FS_SYNC_TIMEOUT
+		char pathname[256], *path;
+		path = d_path(&(file->f_path), pathname, sizeof(pathname));
+		if (IS_ERR(path))
+			path = "(unknown)";
+		do_fsync_task = current;
+		do_fsync_wd.data = (unsigned long)path;
+		mod_timer(&do_fsync_wd, jiffies + 5*HZ);
+#endif //CONFIG_DEBUG_FS_SYNC_TIMEOUT
 		ret = vfs_fsync(file, datasync);
 		fput(file);
+#ifdef CONFIG_DEBUG_FS_SYNC_TIMEOUT		
+		del_timer(&do_fsync_wd);
+#endif //CONFIG_DEBUG_FS_SYNC_TIMEOUT
+/* } Terry Cheng, 20130320, Patch to check do_fsync time whether too long */		
 	}
 	return ret;
 }

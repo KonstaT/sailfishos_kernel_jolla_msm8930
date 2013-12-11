@@ -18,12 +18,14 @@
 #include <linux/input.h>
 #include <linux/slab.h>
 #include <linux/mfd/pm8xxx/core.h>
+#include <linux/mfd/pm8xxx/vibrator.h>
 
 #define VIB_DRV			0x4A
 
 #define VIB_DRV_SEL_MASK	0xf8
 #define VIB_DRV_SEL_SHIFT	0x03
 #define VIB_DRV_EN_MANUAL_MASK	0xfc
+#define VIB_DRV_LOGIC_SHIFT	0x2
 
 #define VIB_MAX_LEVEL_mV	(3100)
 #define VIB_MIN_LEVEL_mV	(1200)
@@ -39,7 +41,6 @@
  * @speed: speed of vibration set from userland
  * @active: state of vibrator
  * @level: level of vibration to set in the chip
- * @reg_vib_drv: VIB_DRV register value
  */
 struct pm8xxx_vib {
 	struct input_dev *vib_input_dev;
@@ -48,8 +49,43 @@ struct pm8xxx_vib {
 	int speed;
 	int level;
 	bool active;
-	u8  reg_vib_drv;
 };
+
+/* Hack to allow vibration from board files, used for pm8xx_vibrator_config */
+static struct device *vib_dev;
+
+/* Hack for direct in-kernel vibra access. Needed by board file restart.c */
+int pm8xxx_vibrator_config(struct pm8xxx_vib_config *vib_config)
+{
+	u8 reg = 0;
+	int rc;
+
+	if (vib_dev == NULL) {
+		pr_err("%s: vib_dev is NULL\n", __func__);
+		return -EINVAL;
+	}
+
+	if (vib_config->drive_mV) {
+		if ((vib_config->drive_mV < VIB_MIN_LEVEL_mV) ||
+			(vib_config->drive_mV > VIB_MAX_LEVEL_mV)) {
+			pr_err("Invalid vibrator drive strength\n");
+			return -EINVAL;
+		}
+	}
+
+	reg = (vib_config->drive_mV / 100) << VIB_DRV_SEL_SHIFT;
+
+	reg |= (!!vib_config->active_low) << VIB_DRV_LOGIC_SHIFT;
+
+	reg |= vib_config->enable_mode;
+
+	rc = pm8xxx_writeb(vib_dev, VIB_DRV, reg);
+	if (rc)
+		pr_err("%s: pm8xxx write failed: rc=%d\n", __func__, rc);
+
+	return rc;
+}
+EXPORT_SYMBOL(pm8xxx_vibrator_config);
 
 /**
  * pm8xxx_vib_read_u8 - helper to read a byte from pmic chip
@@ -95,18 +131,15 @@ static int pm8xxx_vib_write_u8(struct pm8xxx_vib *vib,
 static int pm8xxx_vib_set(struct pm8xxx_vib *vib, bool on)
 {
 	int rc;
-	u8 val = vib->reg_vib_drv;
+	u8 val = 0; /* Voltage[7:3] = 0 (Off), Mode [2:0] = 0 (Manual) */
 
 	if (on)
 		val |= ((vib->level << VIB_DRV_SEL_SHIFT) & VIB_DRV_SEL_MASK);
-	else
-		val &= ~VIB_DRV_SEL_MASK;
 
 	rc = pm8xxx_vib_write_u8(vib, val, VIB_DRV);
 	if (rc < 0)
 		return rc;
 
-	vib->reg_vib_drv = val;
 	return 0;
 }
 
@@ -117,12 +150,6 @@ static int pm8xxx_vib_set(struct pm8xxx_vib *vib, bool on)
 static void pm8xxx_work_handler(struct work_struct *work)
 {
 	struct pm8xxx_vib *vib = container_of(work, struct pm8xxx_vib, work);
-	int rc;
-	u8 val;
-
-	rc = pm8xxx_vib_read_u8(vib, &val, VIB_DRV);
-	if (rc < 0)
-		return;
 
 	/*
 	 * pmic vibrator supports voltage ranges from 1.2 to 3.1V, so
@@ -202,12 +229,10 @@ static int __devinit pm8xxx_vib_probe(struct platform_device *pdev)
 	error = pm8xxx_vib_read_u8(vib, &val, VIB_DRV);
 	if (error < 0)
 		goto err_free_mem;
-	val &= ~VIB_DRV_EN_MANUAL_MASK;
+	val &= VIB_DRV_EN_MANUAL_MASK;
 	error = pm8xxx_vib_write_u8(vib, val, VIB_DRV);
 	if (error < 0)
 		goto err_free_mem;
-
-	vib->reg_vib_drv = val;
 
 	input_dev->name = "pm8xxx_vib_ffmemless";
 	input_dev->id.version = 1;
@@ -231,6 +256,7 @@ static int __devinit pm8xxx_vib_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, vib);
+	vib_dev = &pdev->dev;
 	return 0;
 
 err_destroy_memless:
@@ -248,6 +274,7 @@ static int __devexit pm8xxx_vib_remove(struct platform_device *pdev)
 
 	input_unregister_device(vib->vib_input_dev);
 	kfree(vib);
+	vib_dev = NULL;
 
 	platform_set_drvdata(pdev, NULL);
 

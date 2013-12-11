@@ -38,6 +38,11 @@
 #include <media/radio-iris.h>
 #include <asm/unaligned.h>
 
+//Mark added PM_LOG for FM in 2012.5.28
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif //CONFIG_PM_LOG
+
 static unsigned int rds_buf = 100;
 static int oda_agt;
 static int grp_mask;
@@ -115,6 +120,10 @@ struct iris_device {
 	struct hci_fm_data_rd_rsp default_data;
 	struct hci_fm_spur_data spur_data;
 	unsigned char is_station_valid;
+//Mark added PM_LOG for FM in 2012.5.28
+#ifdef CONFIG_PM_LOG
+	struct pmlog_device *pmlog_device;
+#endif //CONFIG_PM_LOG
 };
 
 static struct video_device *priv_videodev;
@@ -3021,6 +3030,7 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 	struct hci_fm_def_data_wr_req wr_txgain;
 	char sinr_th, sinr;
 	__u8 intf_det_low_th, intf_det_high_th, intf_det_out;
+       int rc = 0;//mark added
 
 	switch (ctrl->id) {
 	case V4L2_CID_PRIVATE_IRIS_TX_TONE:
@@ -3055,6 +3065,14 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 	case V4L2_CID_PRIVATE_IRIS_STATE:
 		switch (ctrl->value) {
 		case FM_RECV:
+			//Mark added PM_LOG for FM in 2012.5.28
+			#ifdef CONFIG_PM_LOG
+			rc = pmlog_device_on(radio->pmlog_device);
+			if (rc) {
+				printk("pmlog_device_on fail rc = %d\n", rc);      
+			}
+			#endif  //CONFIG_PM_LOG
+                  
 			retval = hci_cmd(HCI_FM_ENABLE_RECV_CMD,
 							 radio->fm_hdev);
 			if (retval < 0) {
@@ -3112,6 +3130,14 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 			radio->spur_table_size = 0;
 			switch (radio->mode) {
 			case FM_RECV:
+                            //Mark added PM_LOG for FM in 2012.5.28
+                            #ifdef CONFIG_PM_LOG
+                                rc = pmlog_device_off(radio->pmlog_device);
+                                if (rc) {
+                                    printk("pmlog_device_off fail rc = %d\n", rc);  
+                                }                              
+                            #endif //CONFIG_PM_LOG
+                            
 				retval = hci_cmd(HCI_FM_DISABLE_RECV_CMD,
 						radio->fm_hdev);
 				if (retval < 0) {
@@ -3884,6 +3910,8 @@ static int __init iris_probe(struct platform_device *pdev)
 	int retval;
 	int radio_nr = -1;
 	int i;
+	//Mark added bootlog in 2012.6.22
+	printk("BootLog, +%s\n", __func__);
 
 	if (!pdev) {
 		FMDERR(": pdev is null\n");
@@ -3934,6 +3962,11 @@ static int __init iris_probe(struct platform_device *pdev)
 		}
 	}
 
+        //Mark added PM_LOG for FM in 2012.5.28
+        #ifdef CONFIG_PM_LOG
+        radio->pmlog_device = pmlog_register_device(&pdev->dev);
+        #endif  //CONFIG_PM_LOG
+
 	mutex_init(&radio->lock);
 	init_completion(&radio->sync_xfr_start);
 	radio->tune_req = 0;
@@ -3961,6 +3994,8 @@ static int __init iris_probe(struct platform_device *pdev)
 		memcpy(priv_videodev, radio->videodev,
 			sizeof(struct video_device));
 	}
+	//Mark added bootlog in 2012.6.22
+	printk("BootLog, -%s, ret=%d\n", __func__, retval);
 	return 0;
 }
 
@@ -3972,6 +4007,11 @@ static int __devexit iris_remove(struct platform_device *pdev)
 
 	video_unregister_device(radio->videodev);
 
+	//Mark added PM_LOG for FM in 2012.5.28
+	#ifdef CONFIG_PM_LOG
+	pmlog_unregister_device(radio->pmlog_device);
+	#endif //CONFIG_PM_LOG
+    
 	for (i = 0; i < IRIS_BUF_MAX; i++)
 		kfifo_free(&radio->data_buf[i]);
 

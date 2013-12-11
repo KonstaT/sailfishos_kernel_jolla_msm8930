@@ -70,6 +70,9 @@ MODULE_ALIAS("mmc:block");
 		if (stats->enabled)					\
 			stats->pack_stop_reason[reason]++;		\
 	} while (0)
+/* Bright Lee, 20121214, forbid stuck in damage card { */
+#define MMC_BLK_TIMEOUT_MS  (10 * 1000)
+/* } Bright Lee, 20121214 */
 
 static DEFINE_MUTEX(block_mutex);
 
@@ -1019,6 +1022,13 @@ retry:
 			goto out;
 	}
 
+/* Emily Jiang, 20130403, fix timeout on erase/trim command due to sanitize { */
+#if 0
+	if (mmc_can_sanitize(card))
+		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+				 EXT_CSD_SANITIZE_START, 1, 0);
+#endif
+/* } Emily Jiang, 20130403, fix timeout on erase/trim command due to sanitize */			 
 out_retry:
 	if (err && !mmc_blk_reset(md, card->host, type))
 		goto retry;
@@ -1166,6 +1176,9 @@ static int mmc_blk_err_check(struct mmc_card *card,
 	 */
 	if (!mmc_host_is_spi(card->host) && rq_data_dir(req) != READ) {
 		u32 status;
+		/* Bright Lee, 20121214, forbid stuck in damage card { */
+		unsigned long timeout = jiffies + msecs_to_jiffies(MMC_BLK_TIMEOUT_MS);
+		/* } Bright Lee, 20121214 */
 		do {
 			int err = get_card_status(card, &status, 5);
 			if (err) {
@@ -1173,6 +1186,18 @@ static int mmc_blk_err_check(struct mmc_card *card,
 				       req->rq_disk->disk_name, err);
 				return MMC_BLK_CMD_ERR;
 			}
+
+			/* Bright Lee, 20121214, forbid stuck in damage card { */
+			/* Timeout if the device never becomes ready for data
+			 * and never leaves the program state.
+			 */
+			if (time_after(jiffies, timeout)) {
+				pr_err("%s: Card stuck in programming state!"\
+					" %s %s\n", mmc_hostname(card->host),
+					req->rq_disk->disk_name, __func__);
+				return MMC_BLK_CMD_ERR;
+			}
+			/* } Bright Lee, 20121214 */
 			/*
 			 * Some cards mishandle the status bits,
 			 * so make sure to check both the busy

@@ -112,6 +112,9 @@ struct hrtimer {
 	struct hrtimer_clock_base	*base;
 	unsigned long			state;
 #ifdef CONFIG_TIMER_STATS
+	/* Bright Lee, 20130129, add debug log for hrtimer null function { */
+	void				*init_caller;
+	/* } Bright Lee, 20130129 */
 	int				start_pid;
 	void				*start_site;
 	char				start_comm[16];

@@ -1519,7 +1519,13 @@ static int __devinit etm_probe(struct platform_device *pdev)
 	struct resource *res;
 	static int etm_count;
 	struct coresight_desc *desc;
+	/* Bright Lee, 20130321, enable rtb/etb when ramdump enabled { */
+	extern int ramdump_enabled;
 
+	if (ramdump_enabled) {
+		boot_enable = 1;
+	}
+	/* } Bright Lee, 20130321 */
 	/* Fail probe for Krait pass3 until supported */
 	if (cpu_is_krait_v3()) {
 		dev_info(dev, "ETM: failing probe for Krait pass3\n");

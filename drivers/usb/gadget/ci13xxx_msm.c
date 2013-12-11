@@ -166,7 +166,7 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 	int ret;
 
 	dev_dbg(&pdev->dev, "ci13xxx_msm_probe\n");
-
+	udc_printk(0,"BootLog,+USB %s\n",__func__);
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
 		dev_err(&pdev->dev, "failed to get platform resource mem\n");
@@ -210,7 +210,7 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 
 	pm_runtime_no_callbacks(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
-
+	udc_printk(0,"BootLog -USB %s ret=%d\n",__func__,ret);
 	return 0;
 
 gpio_uninstall:

@@ -349,6 +349,15 @@ config IMX2_WDT
 	  To compile this driver as a module, choose M here: the
 	  module will be called imx2_wdt.
 
+config MSM_WDT
+        bool "Qualcomm MSM Watchdog Support"
+        depends on ARCH_MSM8X60 || ARCH_MSM8960 || ARCH_MSM9615 || ARCH_FSM9XXX
+	select WATCHDOG_CORE
+        help
+                This enables the watchdog as is present on Qualcomm 8x60 which
+		kick by userspace. Currently we use core 0's watchdog, and reset
+		the entire SoC if it times out.
+
 # AVR32 Architecture
 
 config AT32AP700X_WDT

@@ -80,6 +80,13 @@ void panic(const char *fmt, ...)
 	long i, i_next = 0;
 	int state = 0;
 
+	/* Bright Lee, 20121012, merge lastlog for JB { */
+        #ifdef CONFIG_PANIC_LASTLOG
+        void store_panic_caller (int addr);
+        store_panic_caller((unsigned long)__builtin_return_address(0));
+        #endif
+	/* } Bright Lee, 20121012 */
+
 	/*
 	 * Disable local interrupts. This will prevent panic_smp_self_stop
 	 * from deadlocking the first cpu that invokes the panic, since

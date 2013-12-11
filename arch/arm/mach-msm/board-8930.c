@@ -34,7 +34,9 @@
 #include <linux/platform_data/qcom_wcnss_device.h>
 #include <linux/leds.h>
 #include <linux/leds-pm8xxx.h>
+#ifdef CONFIG_TOUCHSCREEN_ATMEL_MXT
 #include <linux/i2c/atmel_mxt_ts.h>
+#endif
 #include <linux/msm_tsens.h>
 #include <linux/ks8851.h>
 #include <linux/i2c/isa1200.h>
@@ -102,13 +104,57 @@
 #include "board-8930.h"
 #include "acpuclock-krait.h"
 
+/* Detroit 3.0 CR #:XXX, WH Lee, 20121107 */
+#if defined(CONFIG_SENSORS_BMA250) || defined(CONFIG_SENSORS_BMA2X2)
+#include <linux/input/bma250.h>
+#endif
+
+#ifdef CONFIG_SENSORS_TSL2772
+#include <linux/i2c/tsl2772.h>
+#endif
+/* WH Lee, 20121107 */
+
+/*Qisda, Don.Lin, 2013/4/10, add BMG160 Gyro {*/
+#ifdef CONFIG_SENSORS_BMG160
+#include <linux/input/bmg160.h>
+#endif
+/*Qisda, Don.Lin, 2013/4/10, add BMG160 Gyro }*/
+
+/* Emily Jiang, 20121105, Add for Focaltech FT5316 TouchScreen { */
+#ifdef CONFIG_TOUCHSCREEN_FOCALTECH_FT5316
+#include <linux/input/focaltech_ft5316_ts.h>
+#endif //CONFIG_TOUCHSCREEN_FOCALTECH_FT5316
+/* } Emily Jiang, 20121105, Add for Focaltech FT5316 TouchScreen */
+/* Emily Jiang, 20130128, Add for Synaptics S3202 TouchScreen { */
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_S3202
+#include <linux/input/synaptics_s3202_touch.h>
+#endif //CONFIG_TOUCHSCREEN_SYNAPTICS_S3202
+/* } Emily Jiang, 20130128, Add for Synaptics S3202 TouchScreen */
+
+/* Jen Chang add for pn544 nfc driver */
+#ifdef CONFIG_PN544_NFC
+#include <linux/nfc/pn544.h>
+#endif
+/* Jen Chang, 20121217 */
+
+//Mark added PM_LOG for BT in 2012.5.29
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif //CONFIG_PM_LOG
+
+#define kernel_debuglevel_dir_path "debuglevel"
+struct dentry *kernel_debuglevel_dir;
+EXPORT_SYMBOL(kernel_debuglevel_dir);
+
 static struct platform_device msm_fm_platform_init = {
 	.name = "iris_fm",
 	.id   = -1,
 };
 
+#ifdef CONFIG_SPI_QUP
 #define KS8851_RST_GPIO		89
 #define KS8851_IRQ_GPIO		90
+#endif
 #define HAP_SHIFT_LVL_OE_GPIO	47
 
 #define HDMI_MHL_MUX_GPIO       73
@@ -173,6 +219,12 @@ struct sx150x_platform_data msm8930_sx150x_data[] = {
 #define MSM_ION_HEAP_NUM	1
 #endif
 
+/*20130429, Patch 2-phase power-efficiency ondemand algorithm  {*/
+#ifdef CONFIG_CPU_FREQ_GOV_ONDEMAND_2_PHASE
+int set_two_phase_freq(int cpufreq);
+#endif	//CONFIG_CPU_FREQ_GOV_ONDEMAND_2_PHASE
+/* } 20130429, Patch 2-phase power-efficiency ondemand algorithm  */
+
 #ifdef CONFIG_KERNEL_MSM_CONTIG_MEM_REGION
 static unsigned msm_contig_mem_size = MSM_CONTIG_MEM_SIZE;
 static int __init msm_contig_mem_size_setup(char *p)
@@ -210,6 +262,85 @@ static int __init pmem_audio_size_setup(char *p)
 }
 early_param("pmem_audio_size", pmem_audio_size_setup);
 #endif
+
+unsigned QcableVar=0;
+EXPORT_SYMBOL(QcableVar);	//0x66616374
+unsigned Qnooffcharge =0;
+EXPORT_SYMBOL(Qnooffcharge);
+
+#ifdef CONFIG_POWEROFF_CHARGING
+enum ANDROIDBOOTMODE androidboot_mode=ANDROIDBOOTMODE_MAX;
+EXPORT_SYMBOL(androidboot_mode);
+int __init board_androidboot_mode_setup(char *s)
+{
+    if (!strcmp(s, "normal"))
+        androidboot_mode = ANDROIDBOOTMODE_NORMAL;
+    else if (!strcmp(s, "recovery"))
+        androidboot_mode = ANDROIDBOOTMODE_RECOVERY;
+    else if (!strcmp(s, "BootRecovery"))
+        androidboot_mode = ANDROIDBOOTMODE_RECOVERY;
+    else if (!strcmp(s, "SDBootRecovery"))
+        androidboot_mode = ANDROIDBOOTMODE_SDRECOVERY;
+    else if (!strcmp(s, "FOATRecovery"))
+        androidboot_mode = ANDROIDBOOTMODE_FOTARECOVERY;
+    else if (!strcmp(s, "charger"))
+        androidboot_mode = ANDROIDBOOTMODE_BOOTOFFCHARGE;
+    else
+        androidboot_mode = ANDROIDBOOTMODE_NORMAL;
+
+    printk(KERN_ERR "androidboot_mode=%d by string %s\n",androidboot_mode,s);
+    return 0;
+}
+early_param("androidboot.mode", board_androidboot_mode_setup);
+
+unsigned pwr_on_status = 0;//ACT_DEAD mode patch+
+EXPORT_SYMBOL(pwr_on_status);
+
+int __init board_pwr_on_status_setup(char *s)
+{
+    if (!strcmp(s, "pwr_on_by_USB"))
+        pwr_on_status = 0x20;
+    else
+        pwr_on_status = 0;
+
+    printk(KERN_ERR "pwr_on_status=%d by string %s\n",pwr_on_status,s);
+    return 0;
+}
+early_param("pwr_on_status", board_pwr_on_status_setup);//ACT_DEAD mode patch-
+
+static int __init Qnooffcharge_setup(char *p)
+{
+	if (!strcmp(p,"1"))
+		Qnooffcharge = 1;
+	printk(KERN_ERR "Qnooffcharge=%d %s\n",Qnooffcharge,p);
+	return 0;
+}
+early_param("Qnooffcharge",Qnooffcharge_setup);
+
+static int __init Qcable_setup(char *p)
+{
+    if (!strcmp(p,"factory"))
+        QcableVar=0x66616374;
+    printk(KERN_ERR "[SEAN]QcableVar=0x%X,%s\n",QcableVar,p);
+    return 0;
+}
+early_param("Qcable", Qcable_setup);
+
+#ifndef CONFIG_BUILD_SHIP
+unsigned QfactoryVar=0;
+EXPORT_SYMBOL(QfactoryVar);       //0x66616374
+static int __init Qfactory_setup(char *p)
+{
+    if (!strcmp(p,"bist"))
+        QfactoryVar=0x62697374;
+    else if (!strcmp(p,"ft"))
+        QfactoryVar=0x20206674;
+    printk(KERN_ERR "[SEAN]QfactoryVar=0x%X,%s",QfactoryVar,p);
+    return 0;
+}
+early_param("Qfactory", Qfactory_setup);
+#endif  //CONFIG_BUILD_SHIP
+#endif  //CONFIG_POWEROFF_CHARGING
 
 #ifdef CONFIG_ANDROID_PMEM
 #ifndef CONFIG_MSM_MULTIMEDIA_USE_ION
@@ -252,6 +383,57 @@ static struct platform_device msm8930_android_pmem_audio_device = {
 };
 #endif /* CONFIG_MSM_MULTIMEDIA_USE_ION */
 #endif /* CONFIG_ANDROID_PMEM */
+
+/* Ed 20121130, Get wlan mac from command line */
+#define WIFIMACLENGTH 12
+unsigned char wifi_mac[WIFIMACLENGTH] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+EXPORT_SYMBOL(wifi_mac);
+static int __init wifi_mac_setup(char *options)
+{
+  memset(wifi_mac, 0, sizeof(wifi_mac));
+  if (!options || !*options) {
+    return 0;
+  } else {
+    memcpy(wifi_mac, options, WIFIMACLENGTH);
+  }
+  return 0;
+}
+__setup("wlanmac=", wifi_mac_setup);
+/* END, Ed 20121130*/
+
+/* Ed 20121130, Porting-WiFi golden bin index */
+int atag_wifi_bin_index = 0;
+EXPORT_SYMBOL(atag_wifi_bin_index);
+static int __init wifi_bin_index_setup(char *options)
+{
+  if (!options || !*options) {
+    return 0;
+  } else {
+    atag_wifi_bin_index = *options - '0';
+  }
+  printk("%s: atag_wifi_bin_index = %d\n", __func__, atag_wifi_bin_index);
+  return 0;
+}
+__setup("wifibin=", wifi_bin_index_setup);
+/* END, Ed 20121130*/
+
+/* Ed 20121130, Porting-WiFi golden bin index */
+/* Bright Lee, 20130321, control etb/rtb if ramdump mode enabled { */
+int ramdump_enabled = 0;
+static int __init Qqdlmode_setup(char *options)
+{
+  if (!options || !*options) {
+    return 0;
+  } else {
+    if (*options == '1') {
+    	ramdump_enabled = 1;
+    }
+  }
+  printk ("%s ramdump_enabled: %d\n", __func__, ramdump_enabled);
+  return 0;
+}
+__setup("Qqdlmode=", Qqdlmode_setup);
+/* } Bright Lee, 20130321 */
 
 struct fmem_platform_data msm8930_fmem_pdata = {
 };
@@ -585,7 +767,7 @@ static void __init reserve_ion_memory(void)
 	/* Since the fixed area may be carved out of lowmem,
 	 * make sure the length is a multiple of 1M.
 	 */
-	fixed_size = (fixed_size + MSM_MM_FW_SIZE + SECTION_SIZE - 1)
+	fixed_size = (fixed_size + HOLE_SIZE + SECTION_SIZE - 1)
 		& SECTION_MASK;
 	msm8930_reserve_fixed_area(fixed_size);
 
@@ -791,6 +973,7 @@ static void __init msm8930_allocate_memory_regions(void)
  * does not need to be as high as 2.85V. It is choosen for
  * microphone sensitivity purpose.
  */
+/* Jen Chang modify to meet boston HW design */
 static struct wcd9xxx_pdata sitar_platform_data = {
 		.slimbus_slave_device = {
 		.name = "sitar-slave",
@@ -800,15 +983,17 @@ static struct wcd9xxx_pdata sitar_platform_data = {
 	.irq_base = SITAR_INTERRUPT_BASE,
 	.num_irqs = NR_WCD9XXX_IRQS,
 	.reset_gpio = 42,
+/* CK Lin, 20130225, modify micbias from 1.8V to 2.7V for IPhone Headset { */
 	.micbias = {
 		.ldoh_v = SITAR_LDOH_2P85_V,
-		.cfilt1_mv = 1800,
-		.cfilt2_mv = 1800,
+		.cfilt1_mv = 2700,
+		.cfilt2_mv = 2700,
 		.bias1_cfilt_sel = SITAR_CFILT1_SEL,
 		.bias2_cfilt_sel = SITAR_CFILT2_SEL,
 		.bias1_cap_mode = MICBIAS_EXT_BYP_CAP,
 		.bias2_cap_mode = MICBIAS_NO_EXT_BYP_CAP,
 	},
+/* } CK Lin, 20130225, modify micbias from 1.8V to 2.7V for IPhone Headset */
 	.regulator = {
 	{
 		.name = "CDC_VDD_CP",
@@ -848,6 +1033,7 @@ static struct wcd9xxx_pdata sitar_platform_data = {
 	},
 	},
 };
+/* Jen Chang, 20121127 */
 
 static struct slim_device msm_slim_sitar = {
 	.name = "sitar-slim",
@@ -857,6 +1043,7 @@ static struct slim_device msm_slim_sitar = {
 	},
 };
 
+/* Jen Chang modify to meet boston HW design */
 static struct wcd9xxx_pdata sitar1p1_platform_data = {
 		.slimbus_slave_device = {
 		.name = "sitar-slave",
@@ -866,15 +1053,17 @@ static struct wcd9xxx_pdata sitar1p1_platform_data = {
 	.irq_base = SITAR_INTERRUPT_BASE,
 	.num_irqs = NR_WCD9XXX_IRQS,
 	.reset_gpio = 42,
+/* CK Lin, 20130225, modify micbias from 1.8V to 2.7V for IPhone Headset { */
 	.micbias = {
 		.ldoh_v = SITAR_LDOH_2P85_V,
-		.cfilt1_mv = 1800,
-		.cfilt2_mv = 1800,
+		.cfilt1_mv = 2700,
+		.cfilt2_mv = 2700,
 		.bias1_cfilt_sel = SITAR_CFILT1_SEL,
 		.bias2_cfilt_sel = SITAR_CFILT2_SEL,
 		.bias1_cap_mode = MICBIAS_EXT_BYP_CAP,
 		.bias2_cap_mode = MICBIAS_NO_EXT_BYP_CAP,
 	},
+/* } CK Lin, 20130225, modify micbias from 1.8V to 2.7V for IPhone Headset */
 	.regulator = {
 	{
 		.name = "CDC_VDD_CP",
@@ -914,6 +1103,7 @@ static struct wcd9xxx_pdata sitar1p1_platform_data = {
 	},
 	},
 };
+/* Jen Chang, 20121127 */
 
 static struct slim_device msm_slim_sitar1p1 = {
 	.name = "sitar1p1-slim",
@@ -970,7 +1160,14 @@ static struct resource resources_wcnss_wlan[] = {
 };
 
 static struct qcom_wcnss_opts qcom_wcnss_pdata = {
+  /*Ed 20130318, EGYPT project use 48Mhz*/
+#ifdef CONFIG_HW_EGYPT
 	.has_48mhz_xo	= 1,
+#else
+	// must change to 0 for Qisda 19.2mhz design
+	.has_48mhz_xo	= 0,
+#endif
+  /*END, Ed 20130318*/
 };
 
 static struct platform_device msm_device_wcnss_wlan = {
@@ -980,6 +1177,13 @@ static struct platform_device msm_device_wcnss_wlan = {
 	.resource	= resources_wcnss_wlan,
 	.dev		= {.platform_data = &qcom_wcnss_pdata},
 };
+
+//Mark added PM_LOG for BT in 2012.5.29
+#ifdef CONFIG_PM_LOG
+static struct platform_device msm_bt_power_device = {
+	.name		= "bt_power",
+};
+#endif //CONFIG_PM_LOG
 
 #ifdef CONFIG_QSEECOM
 /* qseecom bus scaling */
@@ -1465,9 +1669,11 @@ static void __init msm8930_init_buses(void)
 #endif
 }
 
+#ifdef CONFIG_SPI_QUP
 static struct msm_spi_platform_data msm8960_qup_spi_gsbi1_pdata = {
 	.max_clock_speed = 15060000,
 };
+#endif
 
 #ifdef CONFIG_USB_MSM_OTG_72K
 static struct msm_otg_platform_data msm_otg_pdata;
@@ -1754,7 +1960,8 @@ static struct msm_spm_platform_data msm_spm_l2_data[] __initdata = {
 		.num_modes = ARRAY_SIZE(msm_spm_l2_seq_list),
 	},
 };
-
+//Terry Cheng, 20121207, Add compiler option when porting Boston
+#ifdef  CONFIG_HAPTIC_ISA1200
 #define ISA1200_HAP_EN_GPIO	77
 #define ISA1200_HAP_LEN_GPIO	78
 #define ISA1200_HAP_CLK_PM8038	PM8038_GPIO_PM_TO_SYS(7)
@@ -1860,7 +2067,9 @@ static struct i2c_board_info msm_isa1200_board_info[] __initdata = {
 		.platform_data = &isa1200_1_pdata,
 	},
 };
+#endif	//CONFIG_HAPTIC_ISA1200
 
+#ifdef CONFIG_TOUCHSCREEN_ATMEL_MXT
 #define MXT_TS_GPIO_IRQ			11
 #define MXT_TS_RESET_GPIO		52
 
@@ -2050,7 +2259,43 @@ static struct i2c_board_info mxt_device_info_8930[] __initdata = {
 		.irq = MSM_GPIO_TO_INT(MXT_TS_GPIO_IRQ),
 	},
 };
+#endif //CONFIG_TOUCHSCREEN_ATMEL_MXT
 
+/* Emily Jiang, 20121105, Add for Focaltech FT5316 TouchScreen { */
+#ifdef CONFIG_TOUCHSCREEN_FOCALTECH_FT5316
+static struct focaltech_tp_platform_data_t focaltech_touchscreen_plat_data = {
+	.gpio_rst = TS_RST_GPIO_NUM,
+	.gpio_irq = TS_IRQ_GPIO_NUM,
+	.gpio_vendor_id = TS_VENDOR_ID_GPIO_NUM,
+};
+static struct i2c_board_info focaltech_touch_info[] __initdata = {
+	{
+		I2C_BOARD_INFO(FOCALTECH_TP_NAME, TS_I2C_ADDR),
+		.platform_data = &focaltech_touchscreen_plat_data,
+		.irq = MSM_GPIO_TO_INT(TS_IRQ_GPIO_NUM),
+	},
+};
+#endif //CONFIG_TOUCHSCREEN_FOCALTECH_FT5316
+/* } Emily Jiang, 20121105, Add for Focaltech FT5316 TouchScreen */
+/* Emily Jiang, 20130128, Add for SYNAPTICS S3202 TouchScreen */
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_S3202
+static struct synaptics_tp_platform_data_t synaptics_touchscreen_plat_data = {
+	.gpio_rst = TS_RST_GPIO_NUM,
+	.gpio_irq = TS_IRQ_GPIO_NUM,
+	.gpio_vendor_id = TS_VENDOR_ID_GPIO_NUM,
+};
+static struct i2c_board_info synaptics_touch_info[] __initdata = {
+	{
+		I2C_BOARD_INFO(SYNAPTICS_TP_NAME, TS_I2C_ADDR_SYNA),
+		.platform_data = &synaptics_touchscreen_plat_data,
+		.irq = MSM_GPIO_TO_INT(TS_IRQ_GPIO_NUM),
+	},
+};
+#endif //CONFIG_TOUCHSCREEN_SYNAPTICS_S3202
+/* Emily Jiang, 20130128, Add for SYNAPTICS S3202 TouchScreen*/
+
+//Terry Cheng, 20121207, Add compiler option for Boston project
+#ifdef CONFIG_FB_MSM_HDMI_MHL_8334
 #define MHL_POWER_GPIO_PM8038	PM8038_GPIO_PM_TO_SYS(MHL_GPIO_PWR_EN)
 #define MHL_POWER_GPIO_PM8917	PM8917_GPIO_PM_TO_SYS(25)
 static struct msm_mhl_platform_data mhl_platform_data = {
@@ -2072,14 +2317,350 @@ static struct i2c_board_info sii_device_info[] __initdata = {
 		.flags = I2C_CLIENT_WAKE,
 	},
 };
+#endif //CONFIG_FB_MSM_HDMI_MHL_8334
 
+/* Detroit 3.0 CR #:XXX, WH Lee, 20121105 */
+/* Add g-sensor & e-compass & gyro */
+#if defined(CONFIG_SENSORS_BMA250) || defined(CONFIG_SENSORS_BMA2X2) || defined(CONFIG_SENSORS_BMM050) || defined(CONFIG_SENSORS_L3GD20) || defined(CONFIG_SENSORS_TSL2772)
+struct sensors_power_info_t {
+	int init;
+	int status;
+	struct regulator *sensors_l9_regulator;
+	struct regulator *sensors_lvs2_regulator;
+};
+
+static struct sensors_power_info_t sensors_power_info = {
+	.init = 0,
+	.status = 0,
+};
+
+static int sensors_power(int on)
+{
+	int ret;
+
+	if (!sensors_power_info.init)
+	{
+		sensors_power_info.sensors_lvs2_regulator = regulator_get(NULL, "sensors_lvs2");
+		if (IS_ERR(sensors_power_info.sensors_lvs2_regulator)) {
+			pr_err("could not get sensors_lvs2\n");
+			ret = -ENODEV;
+			return ret;
+		}
+
+		sensors_power_info.sensors_l9_regulator = regulator_get(NULL, "sensors_l9");
+		if (IS_ERR(sensors_power_info.sensors_l9_regulator )) {
+			pr_err("could not get sensors_l9\n");
+			ret = -ENODEV;
+			goto get_l9_err;
+		}
+
+		/*
+		ret = regulator_set_voltage(sensors_power_info.sensors_lvs2_regulator, 1800000, 1800000);
+		if (ret) {
+			printk("set sensors_lvs2 failed \n");
+			goto set_lvs2_err;
+		}
+		*/
+
+		ret = regulator_set_voltage(sensors_power_info.sensors_l9_regulator, 2850000, 2850000);
+		if (ret) {
+			printk("set sensors_l9 failed \n");
+			goto set_l9_err;
+		}
+
+		sensors_power_info.init = 1;
+	}
+
+	if (sensors_power_info.status == on)
+		return 0;
+
+	if (on)
+	{
+		ret = regulator_enable(sensors_power_info.sensors_lvs2_regulator);
+		if (ret) {
+			printk("enable sensors_lvs2 failed \n");
+			goto enable_lvs2_err;
+		}
+		msleep(5);
+
+		ret = regulator_enable(sensors_power_info.sensors_l9_regulator);
+		if (ret) {
+			printk("enable sensors_l9 failed \n");
+			goto enable_l9_err;
+		}
+		msleep(100);
+	}
+	else
+	{
+		ret = regulator_disable(sensors_power_info.sensors_l9_regulator);
+		if (ret) {
+			printk("disable sensors_l9 failed \n");
+			goto enable_l9_err;
+		}
+		msleep(5);
+
+		ret = regulator_disable(sensors_power_info.sensors_lvs2_regulator);
+		if (ret) {
+			printk("disable sensors_lvs2 failed \n");
+			goto enable_lvs2_err;
+		}
+		msleep(100);
+	}
+
+	sensors_power_info.status = on;
+	return 0;
+
+enable_l9_err:
+	regulator_disable(sensors_power_info.sensors_lvs2_regulator);
+enable_lvs2_err:
+set_l9_err:
+//set_lvs2_err:
+	regulator_put(sensors_power_info.sensors_l9_regulator);
+get_l9_err:
+	regulator_put(sensors_power_info.sensors_lvs2_regulator);
+	return ret;
+}
+#endif
+
+#ifdef CONFIG_SENSORS_BMM050
+/* Add e-compass */
+#define BMM050_SENSOR_NAME "bmm050"
+#define BMM050_I2C_ADDR 0x12
+static struct i2c_board_info bmm050_info[] __initdata = {
+	{
+		I2C_BOARD_INFO(BMM050_SENSOR_NAME, BMM050_I2C_ADDR),
+	},
+};
+#endif
+#ifdef CONFIG_SENSORS_BMA250
+/* Add g-sensor */
+#define BMA250_SENSOR_NAME "bma250"
+#define BMA250_I2C_ADDR 0x18
+#define BMA250_INT_GPIO 46
+
+/*
+static struct bma250_platform_data bma250_platform_data = {
+	.power = sensors_power,
+};
+*/
+
+static struct i2c_board_info bma250_info[] __initdata = {
+	{
+		I2C_BOARD_INFO(BMA250_SENSOR_NAME, BMA250_I2C_ADDR),
+		.irq = MSM_GPIO_TO_INT(BMA250_INT_GPIO),
+		//.platform_data = &bma250_platform_data,
+	},
+};
+#endif
+#ifdef CONFIG_SENSORS_BMA2X2
+/* Add g-sensor */
+#define BMA2X2_SENSOR_NAME "bma2x2"
+#define BMA2X2_I2C_ADDR 0x10
+#define BMA2X2_INT_GPIO 46
+
+static struct bma250_platform_data bma2x2_platform_data = {
+	.power = sensors_power,
+};
+
+static struct i2c_board_info bma2x2_info[] __initdata = {
+	{
+		I2C_BOARD_INFO(BMA2X2_SENSOR_NAME, BMA2X2_I2C_ADDR),
+		.irq = MSM_GPIO_TO_INT(BMA2X2_INT_GPIO),
+		.platform_data = &bma2x2_platform_data,
+	},
+};
+#endif
+#ifdef CONFIG_SENSORS_L3GD20
+/* Add gyro sensor */
+#define L3GD20_SENSOR_NAME "l3gd20_gyr"
+#define L3GD20_I2C_ADDR 0x6A
+static struct i2c_board_info l3gd20_info[] __initdata = {
+	{
+		I2C_BOARD_INFO(L3GD20_SENSOR_NAME, L3GD20_I2C_ADDR),
+	},
+};
+#endif
+#ifdef CONFIG_SENSORS_BMG160
+#define BOSCH_BMG_DRIVER_NAME "bmg160"
+#define GYRO_I2C_ADDR 0x68
+#define BOSCH_BMG_IRQ_GPIO_NUM 69
+static struct bmg160_gyro_platform_data default_bmg160_gyro_pdata = {
+    .gpio_int1 = 0,
+    .gpio_int2 = BOSCH_BMG_IRQ_GPIO_NUM,
+};
+
+static struct i2c_board_info bosch_bmg160_info[] __initdata = {
+    {
+        I2C_BOARD_INFO(BOSCH_BMG_DRIVER_NAME, GYRO_I2C_ADDR),
+        .platform_data = &default_bmg160_gyro_pdata,
+        .irq = MSM_GPIO_TO_INT(BOSCH_BMG_IRQ_GPIO_NUM),
+    },
+};
+#endif
+#ifdef CONFIG_SENSORS_TSL2772
+/* Add l/p-sensor */
+#define TSL2772_SENSOR_NAME "tsl2772"
+#define TSL2772_I2C_ADDR 0x39
+#define TSL2772_INT_GPIO 49
+
+struct tsl2772_i2c_platform_data tsl2772_data = {
+	.prox_name = "tsl2772_proximity",
+	.als_name = "tsl2772_als",
+	.raw_settings = NULL,
+	.parameters = {
+		.prox_th_min = 255,
+		.prox_th_max = 480,
+		/* 8930 Boston_CR #:XXX, WH Lee, 20130123 */
+		/* Add for prox auto calibrator */
+		/* 8930_Boston_CR #:XXX, WH Lee, 20130412 */
+		/* Fix p-sensor default value */
+		.prox_th_min_default = 103,
+		.prox_th_max_default = 811,
+		/* Original code */
+		//.prox_th_min_default = 255,
+		//.prox_th_max_default = 480,
+		/* WH Lee, 20130412 */
+		/* WH Lee, 20130123 */
+		.als_gate = 10,
+	},
+	.als_can_wake = false,
+	.proximity_can_wake = true,
+};
+
+static struct i2c_board_info tsl2772_info[] __initdata = {
+	{
+		I2C_BOARD_INFO(TSL2772_SENSOR_NAME, TSL2772_I2C_ADDR),
+		.irq = MSM_GPIO_TO_INT(TSL2772_INT_GPIO),
+		.platform_data = &tsl2772_data,
+	},
+};
+#endif
+/* WH Lee, 20121105 */
+
+/* Jen Chang add for pn544 nfc driver */
+#ifdef CONFIG_PN544_NFC
+#define NFC_HOST_INT_GPIO	"NFC-intr"
+#define NFC_ENABLE_GPIO		"NFC-enable"
+#define NFC_FW_RESET_GPIO	"NFC-reset"
+
+static int pn544_nfc_request_resources(struct i2c_client *client)
+{
+	int ret;
+
+	// irq gpio
+	ret = gpio_request(PN544_HOST_INT_GPIO, NFC_HOST_INT_GPIO);
+	if (ret)
+	{
+		pr_err("%s: Request NFC INT GPIO fails %d\n", __func__, ret);
+		return -1;
+	}
+
+	ret = gpio_direction_input(PN544_HOST_INT_GPIO);
+	if (ret)
+	{
+		pr_err("%s: Set GPIO Direction fails %d\n", __func__, ret);
+		goto err_int;
+	}
+
+	// enable gpio (VEN)
+	ret = gpio_request(PN544_ENABLE_GPIO, NFC_ENABLE_GPIO);
+	if (ret)
+	{
+		pr_err("%s: Request for NFC Enable GPIO fails %d\n", __func__, ret);
+		goto err_int;
+	}
+
+	ret = gpio_direction_output(PN544_ENABLE_GPIO, 0);
+	if (ret)
+	{
+		pr_err("%s: Set GPIO Direction fails %d\n", __func__, ret);
+		goto err_enable;
+	}
+
+	// fw update gpio (GPIO4)
+	ret = gpio_request(PN544_FW_RESET_GPIO, NFC_FW_RESET_GPIO);
+	if (ret)
+	{
+		pr_err("%s: Request for NFC FW Reset GPIO fails %d\n", __func__, ret);
+		goto err_enable;
+	}
+
+	ret = gpio_direction_output(PN544_FW_RESET_GPIO, 0);
+	if (ret)
+	{
+		pr_err("%s: Set GPIO Direction fails %d\n", __func__, ret);
+		goto err_fw;
+	}
+
+	return 0;
+
+err_fw:
+	gpio_free(PN544_FW_RESET_GPIO);
+err_enable:
+	gpio_free(PN544_ENABLE_GPIO);
+err_int:
+	gpio_free(PN544_HOST_INT_GPIO);
+	return -1;
+}
+
+static void pn544_nfc_free_resources(void)
+{
+    gpio_free(PN544_HOST_INT_GPIO);
+    gpio_free(PN544_ENABLE_GPIO);
+    gpio_free(PN544_FW_RESET_GPIO);
+}
+
+static void pn544_nfc_enable(int fw)
+{
+    gpio_set_value(PN544_FW_RESET_GPIO, fw ? 1 : 0);
+    msleep(PN544_GPIO4VEN_TIME);
+
+	gpio_set_value(PN544_ENABLE_GPIO, 1);
+}
+
+static void pn544_nfc_disable(void)
+{
+   	gpio_set_value(PN544_ENABLE_GPIO, 0);
+}
+
+static int pn544_nfc_test(void)
+{
+    /*
+     * Put the device into the FW update mode
+     * and then back to the normal mode.
+     * Check the behavior and return one on success,
+     * zero on failure.
+     */
+     return 1;
+}
+
+static struct pn544_nfc_platform_data pn544_nfc_data =
+{
+    .request_resources = pn544_nfc_request_resources,
+    .free_resources = pn544_nfc_free_resources,
+    .enable = pn544_nfc_enable,
+    .test = pn544_nfc_test,
+    .disable = pn544_nfc_disable,
+    .irq_gpio = PN544_HOST_INT_GPIO,
+};
+
+static struct i2c_board_info pn544_nfc_board_info[] __initdata =
+{
+    {
+        I2C_BOARD_INFO(PN544_DRIVER_NAME, PN544_I2C_ADDR),
+        .platform_data = &pn544_nfc_data,
+        .irq = MSM_GPIO_TO_INT(PN544_HOST_INT_GPIO),
+    },
+};
+#endif
+/* Jen Chang, 20121217 */
 
 #ifdef MSM8930_PHASE_2
 
 #define GPIO_VOLUME_UP_PM8038		PM8038_GPIO_PM_TO_SYS(3)
 #define GPIO_VOLUME_DOWN_PM8038		PM8038_GPIO_PM_TO_SYS(8)
-#define GPIO_CAMERA_SNAPSHOT_PM8038	PM8038_GPIO_PM_TO_SYS(10)
-#define GPIO_CAMERA_FOCUS_PM8038	PM8038_GPIO_PM_TO_SYS(11)
+//#define GPIO_CAMERA_SNAPSHOT_PM8038	PM8038_GPIO_PM_TO_SYS(10)
+//#define GPIO_CAMERA_FOCUS_PM8038	PM8038_GPIO_PM_TO_SYS(11)
 
 #define GPIO_VOLUME_UP_PM8917		PM8917_GPIO_PM_TO_SYS(27)
 #define GPIO_VOLUME_DOWN_PM8917		PM8917_GPIO_PM_TO_SYS(28)
@@ -2105,7 +2686,7 @@ static struct gpio_keys_button keys_8930_pm8038[] = {
 		.active_low = 1,
 		.debounce_interval = 15,
 	},
-	{
+	/*{
 		.code = KEY_CAMERA_FOCUS,
 		.type = EV_KEY,
 		.desc = "camera_focus",
@@ -2122,7 +2703,7 @@ static struct gpio_keys_button keys_8930_pm8038[] = {
 		.wakeup = 1,
 		.active_low = 1,
 		.debounce_interval = 15,
-	},
+	},*/ //Carl Chang ,remove unused two camera keys
 };
 
 static struct gpio_keys_button keys_8930_pm8917[] = {
@@ -2180,12 +2761,14 @@ static struct platform_device gpio_keys_8930 = {
 #endif /* MSM8930_PHASE_2 */
 
 static struct msm_i2c_platform_data msm8960_i2c_qup_gsbi4_pdata = {
-	.clk_freq = 100000,
+	.clk_freq = 400000, //Eric Liu, Boston Camera I2C bus use 400K
 	.src_clk_rate = 24000000,
 };
 
 static struct msm_i2c_platform_data msm8960_i2c_qup_gsbi3_pdata = {
-	.clk_freq = 100000,
+	/* Emily Jiang, 20121210, modify I2C-12 clock from 100 KHz to 400 KHz. */
+	.clk_freq = 400000,
+	/* Emily Jiang, 20121210, modify I2C-12 clock from 100 KHz to 400 KHz. */
 	.src_clk_rate = 24000000,
 };
 
@@ -2193,18 +2776,32 @@ static struct msm_i2c_platform_data msm8960_i2c_qup_gsbi9_pdata = {
 	.clk_freq = 100000,
 	.src_clk_rate = 24000000,
 };
-
+//Terry Cheng, 20120104, Add compiler option +
+#ifdef CONFIG_ISL9519_CHARGER
 static struct msm_i2c_platform_data msm8960_i2c_qup_gsbi10_pdata = {
 	.clk_freq = 100000,
 	.src_clk_rate = 24000000,
 };
-
+#endif	//CONFIG_ISL9519_CHARGER
+//Terry Cheng, 20120104, Add compiler option -
 static struct msm_i2c_platform_data msm8960_i2c_qup_gsbi12_pdata = {
-	.clk_freq = 100000,
+	/* Boston CR #:XXX, WH Lee, 20121206 */
+	.clk_freq = 400000,
+	/* Original code */
+	//.clk_freq = 100000,
+	/* WH Lee, 20121206 */
 	.src_clk_rate = 24000000,
 };
+/* Terry Cheng, 20130711, Add GSBI1 I2C { */
+#ifdef CONFIG_SMART_COVER_DETECTION
+static struct msm_i2c_platform_data msm8960_i2c_qup_gsbi1_pdata = {
+	.clk_freq = 400000,
+	.src_clk_rate = 24000000,
+};
+#endif //CONFIG_SMART_COVER_DETECTION
+/* } Terry Cheng, 20130711, Add GSBI1 I2C  */
 
-
+#ifdef CONFIG_SPI_QUP
 static struct ks8851_pdata spi_eth_pdata = {
 	.irq_gpio = KS8851_IRQ_GPIO,
 	.rst_gpio = KS8851_RST_GPIO,
@@ -2228,6 +2825,7 @@ static struct spi_board_info spi_board_info[] __initdata = {
 		.mode                   = SPI_MODE_0,
 	},
 };
+#endif //CONFIG_SPI_QUP
 
 static struct platform_device msm_device_saw_core0 = {
 	.name	= "saw-regulator",
@@ -2293,6 +2891,8 @@ static struct platform_device msm8930_device_ext_l2_vreg __devinitdata = {
 
 #else
 
+// 20130327 Jackie, HW_EGYPT has HDMI(MHL) function.
+#ifdef CONFIG_HW_EGYPT
 /* 8930 Phase 2 */
 static struct platform_device msm8930_device_ext_5v_vreg __devinitdata = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
@@ -2302,7 +2902,9 @@ static struct platform_device msm8930_device_ext_5v_vreg __devinitdata = {
 					MSM8930_GPIO_VREG_ID_EXT_5V],
 	},
 };
+#endif
 
+#if 0
 static struct platform_device msm8930_device_ext_otg_sw_vreg __devinitdata = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 97,
@@ -2311,7 +2913,7 @@ static struct platform_device msm8930_device_ext_otg_sw_vreg __devinitdata = {
 					MSM8930_GPIO_VREG_ID_EXT_OTG_SW],
 	},
 };
-
+#endif
 #endif
 
 static struct platform_device msm8930_device_rpm_regulator __devinitdata = {
@@ -2330,20 +2932,30 @@ static struct platform_device *early_common_devices[] __initdata = {
 	&msm8960_device_dmov,
 	&msm_device_smd,
 	&msm8960_device_uart_gsbi5,
+	/* Terry Cheng, 20121210, Add GSB7 for SIM over UART config { */
+	&msm8960_device_uart_gsbi7,
+	/* } Terry Cheng, 20121210, Add GSB7 for SIM over UART config  */
+//Terry Cheng, 20120104, Add compiler option +
+#ifdef CONFIG_SERIAL_MSM_HS
 	&msm_device_uart_dm6,
+#endif //CONFIG_SERIAL_MSM_HS
+//Terry Cheng, 20120104, Add compiler option -
 	&msm_device_saw_core0,
 	&msm_device_saw_core1,
 };
 
 /* ext_5v and ext_otg_sw are present when using PM8038 */
 static struct platform_device *pmic_pm8038_devices[] __initdata = {
+// 20130327 Jackie, HW_EGYPT has HDMI(MHL) function.
+#ifdef CONFIG_HW_EGYPT
 	&msm8930_device_ext_5v_vreg,
+#endif
 #ifndef MSM8930_PHASE_2
 	&msm8930_device_ext_l2_vreg,
 #endif
 	&msm8960_device_ssbi_pmic,
 #ifdef MSM8930_PHASE_2
-	&msm8930_device_ext_otg_sw_vreg,
+	//&msm8930_device_ext_otg_sw_vreg,
 #endif
 };
 
@@ -2357,14 +2969,34 @@ static struct platform_device *common_devices[] __initdata = {
 	&msm_8960_riva,
 	&msm_pil_tzapps,
 	&msm_pil_vidc,
+//Terry Cheng, 20120104, Add compiler option +
+#ifdef CONFIG_SPI_QUP
 	&msm8960_device_qup_spi_gsbi1,
+#endif	//CONFIG_SPI_QUP
+//Terry Cheng, 20120104, Add compiler option -
 	&msm8960_device_qup_i2c_gsbi3,
 	&msm8960_device_qup_i2c_gsbi4,
 	&msm8960_device_qup_i2c_gsbi9,
+//Terry Cheng, 20120104, Add compiler option +
+#ifdef CONFIG_ISL9519_CHARGER
 	&msm8960_device_qup_i2c_gsbi10,
+#endif //CONFIG_ISL9519_CHARGER
+
+/* Terry Cheng, 20130711, Add GSBI1 I2C { */
+#ifdef CONFIG_SMART_COVER_DETECTION
+	&msm8960_device_qup_i2c_gsbi1, 
+#endif 	//CONFIG_SMART_COVER_DETECTION
+/* } Terry Cheng, 20130711, Add GSBI1 I2C  */
+	
+//Terry Cheng, 20120104, Add compiler option -
 	&msm8960_device_qup_i2c_gsbi12,
 	&msm_slim_ctrl,
 	&msm_device_wcnss_wlan,
+//Mark added PM_LOG for BT in 2012.5.29
+#ifdef CONFIG_PM_LOG
+	&msm_bt_power_device,
+#endif //CONFIG_PM_LOG
+
 #if defined(CONFIG_QSEECOM)
 		&qseecom_device,
 #endif
@@ -2431,6 +3063,8 @@ static struct platform_device *common_devices[] __initdata = {
 	&msm_tsens_device,
 	&msm8930_cache_dump_device,
 	&msm8930_pc_cntr,
+	&toh_device,
+	&toh_regulator,
 };
 
 static struct platform_device *cdp_devices[] __initdata = {
@@ -2482,8 +3116,18 @@ static void __init msm8930_i2c_init(void)
 	msm8960_device_qup_i2c_gsbi9.dev.platform_data =
 					&msm8960_i2c_qup_gsbi9_pdata;
 
+	/* Terry Cheng , 20121207, Add compiler option for gsbi 10 {*/
+	#ifdef CONFIG_ISL9519_CHARGER
 	msm8960_device_qup_i2c_gsbi10.dev.platform_data =
 					&msm8960_i2c_qup_gsbi10_pdata;
+	#endif	//CONFIG_ISL9519_CHARGER
+	/* } Terry Cheng , 20121207, Add compiler option for gsbi 10 */
+
+	/* Terry Cheng, 20130711, Add GSBI1 I2C { */
+	#ifdef CONFIG_SMART_COVER_DETECTION
+	msm8960_device_qup_i2c_gsbi1.dev.platform_data =
+					&msm8960_i2c_qup_gsbi1_pdata;
+	#endif //CONFIG_SMART_COVER_DETECTION
 
 	msm8960_device_qup_i2c_gsbi12.dev.platform_data =
 					&msm8960_i2c_qup_gsbi12_pdata;
@@ -2663,6 +3307,16 @@ static struct i2c_board_info isl_charger_i2c_info[] __initdata = {
 };
 #endif /* CONFIG_ISL9519_CHARGER */
 
+//Eric Liu+
+#ifdef CONFIG_BATTERY_27520
+static struct i2c_board_info bat_27520_i2c_info[] __initdata = {
+	{
+		I2C_BOARD_INFO("bat_27520", (0xAA >> 1)),
+	},
+};
+#endif
+//Eric Liu-
+
 #ifdef CONFIG_STM_LIS3DH
 static struct lis3dh_acc_platform_data lis3dh_accel = {
 	.poll_interval = 200,
@@ -2697,6 +3351,16 @@ static struct i2c_registry msm8960_i2c_devices[] __initdata = {
 		ARRAY_SIZE(isl_charger_i2c_info),
 	},
 #endif /* CONFIG_ISL9519_CHARGER */
+//Eric Liu+
+#ifdef CONFIG_BATTERY_27520
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI9_QUP_I2C_BUS_ID,
+		bat_27520_i2c_info,
+		ARRAY_SIZE(bat_27520_i2c_info),
+	},
+#endif
+//Eric Liu-
 #ifdef CONFIG_INPUT_MPU3050
 	{
 		I2C_FFA | I2C_FLUID,
@@ -2705,24 +3369,52 @@ static struct i2c_registry msm8960_i2c_devices[] __initdata = {
 		ARRAY_SIZE(mpu3050_i2c_boardinfo),
 	},
 #endif
+//Terry Cheng, 20121207, Add compiler option when porting Boston
+#ifdef  CONFIG_HAPTIC_ISA1200
 	{
 		I2C_SURF | I2C_FFA | I2C_FLUID,
 		MSM_8930_GSBI9_QUP_I2C_BUS_ID,
 		msm_isa1200_board_info,
 		ARRAY_SIZE(msm_isa1200_board_info),
 	},
+#endif	//CONFIG_HAPTIC_ISA1200
+#ifdef CONFIG_TOUCHSCREEN_ATMEL_MXT
 	{
 		I2C_SURF | I2C_FFA | I2C_FLUID,
 		MSM_8930_GSBI3_QUP_I2C_BUS_ID,
 		mxt_device_info_8930,
 		ARRAY_SIZE(mxt_device_info_8930),
 	},
+#endif
+/* Emily Jiang, 20121105, Add for Focaltech FT5316 TouchScreen { */
+#ifdef CONFIG_TOUCHSCREEN_FOCALTECH_FT5316
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI3_QUP_I2C_BUS_ID,
+		focaltech_touch_info,
+		ARRAY_SIZE(focaltech_touch_info),
+	},
+#endif	//CONFIG_TOUCHSCREEN_FOCALTECH_FT5316
+/* } Emily Jiang, 20121105, Add for Focaltech FT5316 TouchScreen  */
+/* Emily Jiang, 20130128, Add for SYNAPTICS S3202 TouchScreen */
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_S3202
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI3_QUP_I2C_BUS_ID,
+		synaptics_touch_info,
+		ARRAY_SIZE(synaptics_touch_info),
+	},
+#endif   //CONFIG_TOUCHSCREEN_SYNAPTICS_S3202
+/* Emily Jiang, 20130128, Add for SYNAPTICS S3202 TouchScreen */
+//Terry Cheng, 20121207, Add compiler option for Boston project
+#ifdef CONFIG_FB_MSM_HDMI_MHL_8334
 	{
 		I2C_SURF | I2C_FFA | I2C_LIQUID | I2C_FLUID,
 		MSM_8930_GSBI9_QUP_I2C_BUS_ID,
 		sii_device_info,
 		ARRAY_SIZE(sii_device_info),
 	},
+#endif	//CONFIG_FB_MSM_HDMI_MHL_8334
 #ifdef CONFIG_STM_LIS3DH
 	{
 		I2C_FFA | I2C_FLUID,
@@ -2731,7 +3423,112 @@ static struct i2c_registry msm8960_i2c_devices[] __initdata = {
 		ARRAY_SIZE(lis3dh_i2c_boardinfo),
 	},
 #endif
+/* Detroit 3.0 CR #:XXX, WH Lee, 20121105 */
+/* Add g-sensor and e-compass */
+#ifdef CONFIG_SENSORS_BMM050
+/* Add e-compass */
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI12_QUP_I2C_BUS_ID,
+		bmm050_info,
+		ARRAY_SIZE(bmm050_info),
+	},
+#endif
+#ifdef CONFIG_SENSORS_BMA250
+/* Add g-sensor */
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI12_QUP_I2C_BUS_ID,
+		bma250_info,
+		ARRAY_SIZE(bma250_info),
+	},
+#endif
+#ifdef CONFIG_SENSORS_BMA2X2
+/* Add g-sensor */
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI12_QUP_I2C_BUS_ID,
+		bma2x2_info,
+		ARRAY_SIZE(bma2x2_info),
+	},
+#endif
+#ifdef CONFIG_SENSORS_L3GD20
+/* Add gyro sensor */
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI12_QUP_I2C_BUS_ID,
+		l3gd20_info,
+		ARRAY_SIZE(l3gd20_info),
+	},
+#endif
+#ifdef CONFIG_SENSORS_BMG160
+    {
+        I2C_SURF | I2C_FFA | I2C_FLUID,
+        MSM_8930_GSBI12_QUP_I2C_BUS_ID,
+        bosch_bmg160_info,
+        ARRAY_SIZE(bosch_bmg160_info),
+    },
+#endif   //CONFIG_SENSORS_BMG160
+#ifdef CONFIG_SENSORS_TSL2772
+/* Add l/p sensor */
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI12_QUP_I2C_BUS_ID,
+		tsl2772_info,
+		ARRAY_SIZE(tsl2772_info),
+	},
+#endif
+/* WH Lee, 20121105 */
+/* Jen Chang add for pn544 nfc driver */
+#ifdef CONFIG_PN544_NFC
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI9_QUP_I2C_BUS_ID,
+		pn544_nfc_board_info,
+		ARRAY_SIZE(pn544_nfc_board_info),
+	},
+#endif
+/* Jen Chang, 20121217 */
 };
+// sophia wang, 20130705
+// support to proble 1650 in different i2c bus  according to system_rev
+
+#ifdef CONFIG_MSM_CAMERA_FLASH_ADP1650
+static struct i2c_board_info adp1650_flash_board_info[] __initdata =
+{
+    {
+        I2C_BOARD_INFO("adp1650", 0x30),
+    },
+};
+
+#if 0
+static struct i2c_registry msm8960_i2c_adp1650_bus4_devices[] __initdata = {
+
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI4_QUP_I2C_BUS_ID,
+		adp1650_flash_board_info,
+		ARRAY_SIZE(adp1650_flash_board_info),
+	}
+
+};
+#endif
+
+static struct i2c_registry msm8960_i2c_adp1650_bus5_devices[] __initdata = {
+
+
+	{
+		I2C_SURF | I2C_FFA | I2C_FLUID,
+		MSM_8930_GSBI9_QUP_I2C_BUS_ID,
+		adp1650_flash_board_info,
+		ARRAY_SIZE(adp1650_flash_board_info),
+	}
+
+
+};
+#endif
+
+// sophia wang--, 20130705
 #endif /* CONFIG_I2C */
 
 static void __init register_i2c_devices(void)
@@ -2770,6 +3567,39 @@ static void __init register_i2c_devices(void)
 		i2c_register_board_info(msm8930_camera_i2c_devices.bus,
 			msm8930_camera_i2c_devices.info,
 			msm8930_camera_i2c_devices.len);
+       // sophia wang, 20130703
+       // dynamically support flash adp1650
+       // boston is in bus 4
+       // casper is in bus 5
+ #ifdef CONFIG_MSM_CAMERA_FLASH_ADP1650
+
+ // sophia wang, for sapporo project, adp1659 is in bus 5
+ // don't consider dynamic  problem
+ #if 0
+	if( msm_project_id == BOSTON && system_rev< CASPER_EVT1) 
+	{
+
+		for (i = 0; i < ARRAY_SIZE(msm8960_i2c_adp1650_bus4_devices); ++i) {
+			if (msm8960_i2c_adp1650_bus4_devices[i].machs & mach_mask)
+				i2c_register_board_info(msm8960_i2c_adp1650_bus4_devices[i].bus,
+						msm8960_i2c_adp1650_bus4_devices[i].info,
+						msm8960_i2c_adp1650_bus4_devices[i].len);
+
+		}
+	}       
+	else
+#endif
+	{
+     
+		for (i = 0; i < ARRAY_SIZE(msm8960_i2c_adp1650_bus5_devices); ++i) {
+			if (msm8960_i2c_adp1650_bus5_devices[i].machs & mach_mask)
+				i2c_register_board_info(msm8960_i2c_adp1650_bus5_devices[i].bus,
+						msm8960_i2c_adp1650_bus5_devices[i].info,
+						msm8960_i2c_adp1650_bus5_devices[i].len);
+		}
+      }
+  #endif // adp1650
+     // sophia wang, 20130703
 #endif
 #endif
 }
@@ -2802,7 +3632,10 @@ static void __init msm8930_pm8917_pdata_fixup(void)
 	msm8930_pm8917_wcd9xxx_pdata_fixup(&sitar_platform_data);
 	msm8930_pm8917_wcd9xxx_pdata_fixup(&sitar1p1_platform_data);
 
+//Terry Cheng, 20121207, Add compiler option for Boston project
+#ifdef CONFIG_FB_MSM_HDMI_MHL_8334
 	mhl_platform_data.gpio_mhl_power = MHL_POWER_GPIO_PM8917;
+#endif	//CONFIG_FB_MSM_HDMI_MHL_8334
 
 	gpio_keys_8930_pdata.buttons = keys_8930_pm8917;
 	gpio_keys_8930_pdata.nbuttons = ARRAY_SIZE(keys_8930_pm8917);
@@ -2837,6 +3670,14 @@ static void __init msm8930_cdp_init(void)
 		BUG_ON(msm_rpmrs_levels_init(&msm_rpmrs_data_pm8917));
 	}
 
+	//sean.su add for kernel log level
+	kernel_debuglevel_dir=NULL;
+	kernel_debuglevel_dir=debugfs_create_dir(kernel_debuglevel_dir_path,NULL);
+	if ( kernel_debuglevel_dir==NULL || IS_ERR(kernel_debuglevel_dir) )
+		printk(KERN_ERR "kernel_debuglevel_dir fail\n");
+	else
+		printk(KERN_ERR "kernel_debuglevel_dir OK\n");
+
 	regulator_suppress_info_printing();
 	if (msm_xo_init())
 		pr_err("Failed to initialize XO votes\n");
@@ -2867,17 +3708,23 @@ static void __init msm8930_cdp_init(void)
 	}
 
 	msm_otg_pdata.phy_init_seq = hsusb_phy_init_seq;
+//Terry Cheng, 20121207, Add compiler option for Boston project
+#ifdef CONFIG_FB_MSM_HDMI_MHL_8334
 	if (msm8930_mhl_display_enabled()) {
 		mhl_platform_data.mhl_enabled = true;
 		msm_otg_pdata.mhl_enable = true;
 	}
+#endif	//CONFIG_FB_MSM_HDMI_MHL_8334
 	msm8960_device_otg.dev.platform_data = &msm_otg_pdata;
 	android_usb_pdata.swfi_latency =
 			msm_rpmrs_levels[0].latency_us;
 	msm8930_init_gpiomux();
+
+#ifdef CONFIG_SPI_QUP
 	msm8960_device_qup_spi_gsbi1.dev.platform_data =
 				&msm8960_qup_spi_gsbi1_pdata;
 	spi_register_board_info(spi_board_info, ARRAY_SIZE(spi_board_info));
+#endif	//CONFIG_SPI_QUP
 
 	/*
 	 * TODO: When physical 8930/PM8038 hardware becomes
@@ -2945,7 +3792,9 @@ static void __init msm8930_cdp_init(void)
 	msm8930_init_cam();
 #endif
 	msm8930_init_mmc();
+#ifdef CONFIG_TOUCHSCREEN_ATMEL_MXT
 	mxt_init_vkeys_8930();
+#endif
 	register_i2c_devices();
 	msm8930_init_fb();
 	slim_register_board_info(msm_slim_devices,
@@ -2953,6 +3802,12 @@ static void __init msm8930_cdp_init(void)
 	change_memory_power = &msm8930_change_memory_power;
 	BUG_ON(msm_pm_boot_init(&msm_pm_boot_pdata));
 	msm_pm_set_tz_retention_flag(1);
+
+/* Terry Cheng, 20130429, Patch 2-phase power-efficiency ondemand algorithm {*/
+#ifdef CONFIG_CPU_FREQ_GOV_ONDEMAND_2_PHASE
+	set_two_phase_freq(1026000);
+#endif	//CONFIG_CPU_FREQ_GOV_ONDEMAND_2_PHASE
+/* } Terry Cheng, 20130429, Patch 2-phase power-efficiency ondemand algorithm */
 
 	if (PLATFORM_IS_CHARM25())
 		platform_add_devices(mdm_devices, ARRAY_SIZE(mdm_devices));

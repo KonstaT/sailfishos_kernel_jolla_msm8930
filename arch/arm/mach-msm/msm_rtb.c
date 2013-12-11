@@ -71,8 +71,14 @@ static atomic_t msm_rtb_idx;
 #endif
 
 struct msm_rtb_state msm_rtb = {
-	.filter = 1 << LOGK_LOGBUF,
-	.enabled = 1,
+	/* Bright Lee, 20130321, move msm_rtb.filter=0x3F from cmdline to here { */
+	// .filter = 1 << LOGK_LOGBUF,
+	.filter = 0x3F,
+	/* } Bright Lee, 20130321 */
+	/* Bright Lee, 20130321, enable etb/rtb when ramdump enabled { */
+	// .enabled = 1,
+	.enabled = 0,
+	/* } Bright Lee, 20130321 */
 };
 
 module_param_named(filter, msm_rtb.filter, uint, 0644);
@@ -232,6 +238,13 @@ int msm_rtb_probe(struct platform_device *pdev)
 	unsigned int cpu;
 #endif
 	int ret;
+	/* Bright Lee, 20130321, enable etb/rtb when ramdump enabled { */
+	extern int ramdump_enabled;
+
+	if (ramdump_enabled == 1) {
+		msm_rtb.enabled = 1;
+	}
+	/* } Bright Lee, 20130321 */
 
 	if (!pdev->dev.of_node) {
 		msm_rtb.size = d->size;

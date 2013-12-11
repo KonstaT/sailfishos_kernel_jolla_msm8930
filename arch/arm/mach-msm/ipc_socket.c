@@ -45,6 +45,10 @@ static inline int check_permissions(void)
 	int rc = 0;
 	if (!current_euid() || in_egroup_p(AID_NET_RAW))
 		rc = 1;
+	/* Bright Lee, 20121009, allow engineer mode of modem info to create ipc socket { */
+	if (in_egroup_p( 1001 /* AID_RADIO */ ))  /* telephony subsystem, RIL, reference android_filesystem_config.h */
+		rc = 1;
+	/* } Bright Lee, 20121009 */
 	return rc;
 }
 # else

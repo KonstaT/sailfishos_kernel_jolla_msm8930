@@ -67,6 +67,8 @@ struct suspend_stats {
 	int	errno[REC_FAILED_NUM];
 	int	last_failed_step;
 	enum suspend_stat_step	failed_steps[REC_FAILED_NUM];
+	//20130313, Add check total_try_suspend_count. If total_try_suspend_count == 0, it means wakelock does not unlock. 
+	int entry;
 };
 
 extern struct suspend_stats suspend_stats;

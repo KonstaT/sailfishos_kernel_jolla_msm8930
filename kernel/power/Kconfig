@@ -85,6 +85,14 @@ choice
 		  to the screen and notifies user-space when it should resume.
 endchoice
 
+# Terry Cheng, 20111124 +
+# Port from 8250 platfrom. Add wake lock watch dog to notify log master when wake lock too long
+config WAKELOCK_WATCHDOG
+	bool "Wake lock watchdog"
+	depends on PM_SLEEP
+	default y
+# Terry Cheng, 20111124 -
+
 config HIBERNATE_CALLBACKS
 	bool
 

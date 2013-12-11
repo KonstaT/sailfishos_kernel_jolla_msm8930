@@ -25,6 +25,9 @@
 #include <mach/msm_memtypes.h>
 #include <mach/msm_rtb.h>
 
+//Terry Cheng, 20121127, Include hwid header file 
+#include <mach/hwid.h>
+
 /*
  * TODO: When physical 8930/PM8038 hardware becomes
  * available, remove this block.
@@ -163,6 +166,7 @@ void __init msm8930_init_gpu(void);
 #define MSM_8930_GSBI9_QUP_I2C_BUS_ID 0
 #define MSM_8930_GSBI10_QUP_I2C_BUS_ID 10
 #define MSM_8930_GSBI12_QUP_I2C_BUS_ID 12
+#define MSM_8930_GSBI1_QUP_I2C_BUS_ID 1  //Terry Cheng, 20130711, Add GSBI1 I2C
 
 extern struct msm_rtb_platform_data msm8930_rtb_pdata;
 extern struct msm_cache_dump_platform_data msm8930_cache_dump_pdata;

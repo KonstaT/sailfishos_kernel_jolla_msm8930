@@ -135,10 +135,15 @@ static int dtv_off_sub(void)
 
 	pr_info("%s\n", __func__);
 
+#ifdef CONFIG_HW_NO_HDMIOUT
+	// 20130319 Jackie, we don't have HDMI function for Boston HW.
+	// It is unnecessary to turn on/off hdmi_clk and mdp_tv_clk
+	// to avoid warning message.
+#else   // original code
 	clk_disable_unprepare(hdmi_clk);
 	if (mdp_tv_clk)
 		clk_disable_unprepare(mdp_tv_clk);
-
+#endif
 	if (dtv_pdata && dtv_pdata->lcdc_power_save)
 		dtv_pdata->lcdc_power_save(0);
 
@@ -197,6 +202,12 @@ static int dtv_on(struct platform_device *pdev)
 
 	mfd = platform_get_drvdata(pdev);
 
+#ifdef CONFIG_HW_NO_HDMIOUT
+	// 20130319 Jackie, we don't have HDMI function for Boston HW.
+	// It is unnecessary to turn on/off hdmi_clk and mdp_tv_clk
+	// to avoid warning message.
+	mfd->panel_info.clk_rate = mfd->fbi->var.pixclock;
+#else   // original code
 	ret = clk_set_rate(tv_src_clk, mfd->fbi->var.pixclock);
 	if (ret) {
 		pr_info("%s: clk_set_rate(%d) failed\n", __func__,
@@ -215,7 +226,7 @@ static int dtv_on(struct platform_device *pdev)
 
 	if (mdp_tv_clk)
 		clk_prepare_enable(mdp_tv_clk);
-
+#endif
 	ret = panel_next_on(pdev);
 	return ret;
 }

@@ -81,6 +81,22 @@ int power_supply_set_scope(struct power_supply *psy, int scope)
 EXPORT_SYMBOL_GPL(power_supply_set_scope);
 
 /**
+ * power_supply_set_charger_disable set charger_disable of the power supply
+ * @psy:	the power supply to control
+ * @enable:	sets online property of power supply
+ */
+int power_supply_set_charger_disable(struct power_supply *psy, bool enable)
+{
+	const union power_supply_propval ret = {enable, };
+
+	if (psy->set_property)
+		return psy->set_property(psy, POWER_SUPPLY_PROP_CHARGER_DISABLE,
+								&ret);
+	return -ENXIO;
+}
+EXPORT_SYMBOL_GPL(power_supply_set_charger_disable);
+
+/**
  * power_supply_set_supply_type - set type of the power supply
  * @psy:	the power supply to control
  * @supply_type:	sets type property of power supply

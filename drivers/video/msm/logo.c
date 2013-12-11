@@ -26,12 +26,21 @@
 
 #define fb_width(fb)	((fb)->var.xres)
 #define fb_height(fb)	((fb)->var.yres)
-#define fb_size(fb)	((fb)->var.xres * (fb)->var.yres * 2)
+#define fb_size(fb)	((fb)->var.xres * (fb)->var.yres * ((fb)->var.bits_per_pixel/8))
+#define fb_bpp(fb)	((fb)->var.bits_per_pixel)
 
 static void memset16(void *_ptr, unsigned short val, unsigned count)
 {
 	unsigned short *ptr = _ptr;
 	count >>= 1;
+	while (count--)
+		*ptr++ = val;
+}
+
+static void memset32(void *_ptr, unsigned val, unsigned count)
+{
+	unsigned *ptr = _ptr;
+	count >>= 2;
 	while (count--)
 		*ptr++ = val;
 }
@@ -43,6 +52,8 @@ int load_565rle_image(char *filename, bool bf_supported)
 	int fd, count, err = 0;
 	unsigned max;
 	unsigned short *data, *bits, *ptr;
+	unsigned rgb32, red, green, blue, alpha;
+	unsigned non_align32;
 
 	info = registered_fb[0];
 	if (!info) {
@@ -75,6 +86,16 @@ int load_565rle_image(char *filename, bool bf_supported)
 	}
 
 	max = fb_width(info) * fb_height(info);
+
+	/* The adreno GPU hardware requires that the pitch be aligned to
+	   32 pixels for color buffers, so for the cases where the GPU
+	   is writing directly to fb0, the framebuffer pitch
+	   also needs to be 32 pixel aligned */
+	// Note: The *.rle should also be aligned to 32 pixels.
+	non_align32 = fb_width(info) % 32;
+	if (non_align32)
+		max = (fb_width(info) + 32 - non_align32) * fb_height(info);
+
 	ptr = data;
 	if (bf_supported && (info->node == 1 || info->node == 2)) {
 		err = -EPERM;
@@ -86,9 +107,31 @@ int load_565rle_image(char *filename, bool bf_supported)
 	while (count > 3) {
 		unsigned n = ptr[0];
 		if (n > max)
+		{
+			pr_err("## %s: !!! n=%d, max=%d", __func__, n, max);
 			break;
-		memset16(bits, ptr[1], n << 1);
-		bits += n;
+		}
+
+                if (fb_bpp(info) == 16)
+                {
+			memset16(bits, ptr[1], n << 1);
+			bits += n;
+                }
+                else
+                {
+                        /* convert 16 bits to 32 bits */
+                        rgb32 = ((ptr[1] >> 11) & 0x1F);
+                        red = (rgb32 << 3) | (rgb32 >> 2);
+                        rgb32 = ((ptr[1] >> 5) & 0x3F);
+                        green = (rgb32 << 2) | (rgb32 >> 4);
+                        rgb32 = ((ptr[1]) & 0x1F);
+                        blue = (rgb32 << 3) | (rgb32 >> 2);
+                        alpha = 0xff;
+                        rgb32 = (alpha << 24) | (blue << 16)
+                        | (green << 8) | (red);
+                        memset32((uint32_t *)bits, rgb32, n << 2);
+                        bits += (n * 2);
+                }
 		max -= n;
 		ptr += 2;
 		count -= 4;

@@ -13,6 +13,8 @@
 
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
+#include <linux/regulator/fixed.h>
+#include <linux/regulator/machine.h>
 #include <asm/io.h>
 #include <linux/msm_ion.h>
 #include <mach/msm_iomap.h>
@@ -33,6 +35,7 @@
 #include "rpm_rbcpr_stats.h"
 #include "footswitch.h"
 #include "acpuclock-krait.h"
+#include "board-8930.h"
 
 #ifdef CONFIG_MSM_MPM
 #include <mach/mpm.h>
@@ -981,13 +984,13 @@ static struct msm_bus_vectors vidc_venc_1080p_vectors[] = {
 		.src = MSM_BUS_MASTER_HD_CODEC_PORT0,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
 		.ab  = 372244480,
-		.ib  = 2560000000U,
+		.ib  = 3200000000U,
 	},
 	{
 		.src = MSM_BUS_MASTER_HD_CODEC_PORT1,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
 		.ab  = 501219328,
-		.ib  = 2560000000U,
+		.ib  = 3200000000U,
 	},
 	{
 		.src = MSM_BUS_MASTER_AMPSS_M0,
@@ -1364,5 +1367,85 @@ struct platform_device msm8930_cache_dump_device = {
 	.id             = -1,
 	.dev            = {
 		.platform_data = &msm8930_cache_dump_pdata,
+	},
+};
+
+#define TOH_GPIO_COVER_SWITCH	43
+#define TOH_GPIO_INT		67
+
+struct resource toh_resources[] = {
+	{
+		.start = TOH_GPIO_COVER_SWITCH,
+		.end = TOH_GPIO_COVER_SWITCH,
+		.flags = IORESOURCE_IO,
+	},
+	{
+		.start = TOH_GPIO_INT,
+		.end = TOH_GPIO_INT,
+		.flags = IORESOURCE_IO,
+	},
+	{
+		.start = MSM_GPIO_TO_INT(TOH_GPIO_COVER_SWITCH),
+		.end = MSM_GPIO_TO_INT(TOH_GPIO_COVER_SWITCH),
+		.flags = IORESOURCE_IRQ,
+	},
+	{
+		.start = MSM_GPIO_TO_INT(TOH_GPIO_INT),
+		.end = MSM_GPIO_TO_INT(TOH_GPIO_INT),
+		.flags = IORESOURCE_IRQ,
+	},
+	{
+		.start = MSM_8930_GSBI1_QUP_I2C_BUS_ID,
+		.end = MSM_8930_GSBI1_QUP_I2C_BUS_ID,
+		.flags = IORESOURCE_BUS,
+	},
+};
+
+struct platform_device toh_device = {
+	.name = "toh-event",
+	.num_resources = ARRAY_SIZE(toh_resources),
+	.resource = toh_resources,
+};
+
+#define TOH_REGULATOR_GPIO	63
+#define TOH_REGULATOR_NAME	"vdd_3v3_scover"
+
+static struct regulator_consumer_supply toh_regulator_consumers[] = {
+	{
+		.dev_name = "toh-core.0",
+		.supply = "toh_vdd",
+	},
+	{
+		.supply = "toh_vdd_userspace",
+	},
+
+
+};
+
+static struct regulator_init_data toh_regulator_init_data = {
+	.constraints = {
+		.name			= TOH_REGULATOR_NAME,
+		.max_uA			= 300000,
+		.always_on		= false,
+		.boot_on		= false,
+		.valid_ops_mask		= REGULATOR_CHANGE_STATUS,
+	},
+	.num_consumer_supplies  = ARRAY_SIZE(toh_regulator_consumers),
+	.consumer_supplies      = toh_regulator_consumers,
+};
+
+static struct fixed_voltage_config toh_regulator_info = {
+	.supply_name		= TOH_REGULATOR_NAME,
+	.microvolts		= 3300000,
+	.gpio			= TOH_REGULATOR_GPIO,
+	.enable_high		= true,
+	.init_data		= &toh_regulator_init_data,
+};
+
+struct platform_device toh_regulator = {
+	.name = "reg-fixed-voltage",
+	.id   = -1,
+	.dev  = {
+		.platform_data = &toh_regulator_info,
 	},
 };

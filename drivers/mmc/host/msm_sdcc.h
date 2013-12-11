@@ -422,6 +422,13 @@ struct msmsdcc_host {
 	struct device_attribute auto_cmd19_attr;
 	struct device_attribute auto_cmd21_attr;
 	int saved_tuning_phase;
+	/* Emily Jiang, 20121206, Add for FTM SD card detect function */
+	struct device_attribute	detect;
+	/* Emily Jiang, 20121206, Add for FTM SD card detect function */
+	/*Emily, 20120527, add PM LOG for eMMC and external SD */
+#ifdef CONFIG_PM_LOG
+	struct pmlog_device *pmlog_device;//Terry Cheng, 20120531, Only need one pmlog_device
+#endif //CONFIG_PM_LOG
 };
 
 #define MSMSDCC_VERSION_STEP_MASK	0x0000FFFF

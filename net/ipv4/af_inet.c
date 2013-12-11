@@ -119,6 +119,13 @@
 #include <linux/mroute.h>
 #endif
 
+/* Bright Lee, 20120323, tcp/udp port monitor for modem { */
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
+#include "../../arch/arm/mach-msm/smd_private.h"
+#include <mach/oem_smem_struct.h>
+/* } Bright Lee, 20120323 */
+
 #ifdef CONFIG_ANDROID_PARANOID_NETWORK
 #include <linux/android_aid.h>
 
@@ -1822,3 +1829,124 @@ static int __init ipv4_proc_init(void)
 
 MODULE_ALIAS_NETPROTO(PF_INET);
 
+
+
+
+/* Bright Lee, 20120323, tcp/udp port monitor for modem { */
+static smem_vendor_id1_apps_data *smem_vendor1_data = NULL;
+
+void update_socket_port_status (unsigned type, unsigned long port, unsigned Open)
+{
+	if (smem_vendor1_data == NULL) {
+		return;
+	}
+	switch (type) {
+		case SOCK_STREAM:
+			switch (Open) {
+				case true:
+					smem_vendor1_data->tcpports[port/8] |= (1 << (port%8));
+					break;
+				case false:
+					smem_vendor1_data->tcpports[port/8] &= ~(1 << (port%8));
+					break;
+				default:
+					break;
+			}
+			break;
+		case SOCK_DGRAM:
+			switch (Open) {
+				case true:
+					smem_vendor1_data->udpports[port/8] |= (1 << (port%8));
+					break;
+				case false:
+					smem_vendor1_data->udpports[port/8] &= ~(1 << (port%8));
+					break;
+				default:
+					break;
+			}
+			break;
+		default:
+			break;
+	}
+}
+EXPORT_SYMBOL(update_socket_port_status);
+
+
+/* Bright Lee, 20120430, ip forwarding for ip filter feature { */
+void update_ip_forwarding_status(unsigned on)
+{
+	if (smem_vendor1_data == NULL) {
+		return;
+	}
+	smem_vendor1_data->ipforwarding = !!on;
+}
+/* } Bright Lee, 20120430 */
+
+
+static int portmon_show(struct seq_file *s, void *unused)
+{
+	int i, j;
+
+	if (smem_vendor1_data == NULL) {
+		return 0;
+	}
+
+	seq_printf (s, "ip_forwarding: %d\n", smem_vendor1_data->ipforwarding);
+	seq_printf (s, "tcp:");
+	for (i = 0; i < 8192; i ++) {
+		for (j = 0; j < 8; j ++) {
+			if ((smem_vendor1_data->tcpports[i] & (1 << j)) != 0) {
+				seq_printf (s, " %d", i * 8 + j);
+			}
+		}
+	}
+	seq_printf (s, "\n");
+
+	seq_printf (s, "udp:");
+	for (i = 0; i < 8192; i ++) {
+		for (j = 0; j < 8; j ++) {
+			if ((smem_vendor1_data->udpports[i] & (1 << j)) != 0) {
+				seq_printf (s, " %d", i * 8 + j);
+			}
+		}
+	}
+	seq_printf (s, "\n");
+
+	return 0;
+}
+
+
+static int portmon_debug_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, portmon_show, NULL);
+}
+
+
+
+static const struct file_operations portmon_operations = {
+        .open           = portmon_debug_open,
+	.read           = seq_read,
+	.llseek         = seq_lseek,
+	.release        = single_release,
+};
+
+
+
+static __init int port_monitor_init(void)
+{
+	if (smem_vendor1_data == NULL) {
+		smem_vendor1_data = (smem_vendor_id1_apps_data *) smem_alloc (SMEM_ID_VENDOR1, sizeof (smem_vendor_id1_apps_data));
+	}
+
+	if (smem_vendor1_data == NULL) {
+		printk (KERN_ERR "can't allocate SMEM_ID_VENDOR1 for port monitor\n");
+		return 0;
+	}
+
+        (void) debugfs_create_file("socket_filter", S_IFREG | S_IRUGO,
+				NULL, NULL, &portmon_operations);
+
+	return 0;
+}
+fs_initcall(port_monitor_init);
+/* } Bright Lee, 20120323 */

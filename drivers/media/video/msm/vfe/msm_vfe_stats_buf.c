@@ -358,6 +358,11 @@ static int msm_stats_dqbuf(struct msm_stats_bufq_ctrl *stats_ctrl,
 		if(!stats_buf)
 			return -1;
 		if (stats_buf->state == MSM_STATS_BUFFER_STATE_QUEUED) {
+                // sophia wang++, 20130419, check to prevent null point
+                // from QCT codeaurora.org
+                       if(!stats_buf)
+			 return -1;
+                // sophia wang --
 			/* found one buf */
 			list_del_init(&stats_buf->list);
 			*pp_stats_buf = stats_buf;

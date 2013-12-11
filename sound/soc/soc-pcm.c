@@ -34,6 +34,10 @@
 
 #define MAX_BE_USERS	8	/* adjust if too low for everday use */
 
+extern unsigned int SND_DLL;
+#undef dev_dbg
+#define dev_dbg(dev,fmt,args...) do { if(SND_DLL > 0) printk(fmt,##args); } while(0);
+
 static int soc_dpcm_be_dai_hw_free(struct snd_soc_pcm_runtime *fe, int stream);
 
 /* ASoC no host IO hardware.
@@ -1648,10 +1652,8 @@ int soc_dpcm_fe_dai_trigger(struct snd_pcm_substream *substream, int cmd)
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
-		fe->dpcm[stream].state = SND_SOC_DPCM_STATE_STOP;
-		break;
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-		fe->dpcm[stream].state = SND_SOC_DPCM_STATE_PAUSED;
+		fe->dpcm[stream].state = SND_SOC_DPCM_STATE_STOP;
 		break;
 	}
 

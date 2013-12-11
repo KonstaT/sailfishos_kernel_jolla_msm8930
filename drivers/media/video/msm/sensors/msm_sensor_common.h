@@ -27,7 +27,7 @@
 #include <mach/camera.h>
 #include <media/msm_camera.h>
 #include <media/v4l2-subdev.h>
-#include "msm_camera_i2c.h"
+#include "../io/msm_camera_i2c.h"
 #include "msm_camera_eeprom.h"
 #define Q8  0x00000100
 #define Q10 0x00000400
@@ -156,6 +156,16 @@ struct msm_sensor_fn_t {
 	void (*sensor_adjust_frame_lines) (struct msm_sensor_ctrl_t *s_ctrl);
 	int32_t (*sensor_get_csi_params)(struct msm_sensor_ctrl_t *,
 		struct csi_lane_params_t *);
+
+	// sophia wang++ jb porting
+	uint8_t(*sensor_read_otp_mid)(struct msm_sensor_ctrl_t *);
+	int32_t (*sensor_get_calib_params)(struct msm_sensor_ctrl_t *,
+		struct otp_params*);
+	// sophia wang-- jb porting
+
+        // sophia, for ov2675 otp write
+	uint8_t( *sensor_writ_otp)(struct msm_sensor_ctrl_t*, unsigned long long );
+       unsigned long long (*sensor_get_fuse_id)(struct msm_sensor_ctrl_t* );
 };
 
 struct msm_sensor_csi_info {
@@ -179,8 +189,14 @@ struct msm_sensor_ctrl_t {
 	struct platform_device *pdev;
 	struct msm_camera_i2c_client *sensor_i2c_client;
 	uint16_t sensor_i2c_addr;
+	// sophia wang++, 20130115, for hw change 
+	enum msm_camera_vreg_name_t *vreg_seq_evt0;
+	int num_vreg_seq_evt0;
+	enum msm_camera_vreg_name_t *vreg_seq_evt1;
+	int num_vreg_seq_evt1;
 	enum msm_camera_vreg_name_t *vreg_seq;
 	int num_vreg_seq;
+	// sophia wang--, 20130115, for hw change 
 	struct msm_camera_power_seq_t *power_seq;
 	int num_power_seq;
 	enum msm_sensor_device_type_t sensor_device_type;
@@ -219,6 +235,7 @@ struct msm_sensor_ctrl_t {
 	/* delay (in ms) after power up sequence */
 	uint16_t power_seq_delay;
 	struct msm_sensor_eeprom_data eeprom_data;
+	struct otp_struct* otp_info;  // sophia wang
 };
 
 struct msm_sensor_ctrl_t *get_sctrl(struct v4l2_subdev *sd);

@@ -48,6 +48,7 @@
 #include "tvenc.h"
 #include "mdp.h"
 #include "mdp4.h"
+#include "../../leds/leds-pm8xxx.h"
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MSM_FB_NUM	3
@@ -386,6 +387,8 @@ static int msm_fb_probe(struct platform_device *pdev)
 
 	if (pdev_list_cnt >= MSM_FB_MAX_DEV_LIST)
 		return -ENOMEM;
+
+	mutex_init(&mfd->blank_mutex);
 
 	vsync_cntrl.dev = mfd->fbi->dev;
 	mfd->panel_info.frame_count = 0;
@@ -818,7 +821,7 @@ static void msmfb_early_resume(struct early_suspend *h)
 }
 #endif
 
-static int unset_bl_level, bl_updated;
+static int unset_bl_level, bl_updated, bl_updated_ftd = 0;
 static int bl_level_old;
 static int mdp_bl_scale_config(struct msm_fb_data_type *mfd,
 						struct mdp_bl_scale_data *data)
@@ -898,13 +901,28 @@ static int msm_fb_blank_sub(int blank_mode, struct fb_info *info,
 		return -ENODEV;
 	}
 
+	mutex_lock(&mfd->blank_mutex);
+
 	switch (blank_mode) {
 	case FB_BLANK_UNBLANK:
 		if (!mfd->panel_power_on) {
-			msleep(16);
+			//msleep(16);
 			ret = pdata->on(mfd->pdev);
 			if (ret == 0) {
 				mfd->panel_power_on = TRUE;
+
+			// 20121204 Jackie, do it for primary LCD
+			if (mfd->fbi->node == 0)
+			{
+				// force to update current content in FB0 to LCM.
+				// since LCM just finished HW-reset, and LCM's FB is empty.
+				if (mfd->panel_info.type == MIPI_CMD_PANEL)
+				{
+					mdp4_dsi_cmd_vsync_ctrl(info, 1);
+					mdp4_dsi_cmd_overlay(mfd);
+					mdp4_dsi_cmd_vsync_ctrl(info, 0);
+				}
+			}
 
 /* ToDo: possible conflict with android which doesn't expect sw refresher */
 /*
@@ -933,16 +951,26 @@ static int msm_fb_blank_sub(int blank_mode, struct fb_info *info,
 			mfd->panel_power_on = FALSE;
 			cancel_delayed_work_sync(&mfd->backlight_worker);
 			bl_updated = 0;
+			bl_updated_ftd = 0;
 
 			msleep(16);
 			ret = pdata->off(mfd->pdev);
 			if (ret)
 				mfd->panel_power_on = curr_pwr_state;
 
+			// 20121204 Jackie, do it for primary LCD
+			if (mfd->fbi->node == 0)
+			{
+				// force to draw FB0 as whole Black
+				memset(mfd->fbi->screen_base, 0x0, mfd->fbi->fix.smem_len);
+			}
+
 			mfd->op_enable = TRUE;
 		}
 		break;
 	}
+
+	mutex_unlock(&mfd->blank_mutex);
 
 	return ret;
 }
@@ -1065,22 +1093,18 @@ static int msm_fb_mmap(struct fb_info *info, struct vm_area_struct * vma)
 	u32 len = PAGE_ALIGN((start & ~PAGE_MASK) + info->fix.smem_len);
 	unsigned long off = vma->vm_pgoff << PAGE_SHIFT;
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
-	if (off >= len) {
-		/* memory mapped io */
-		off -= len;
-		if (info->var.accel_flags) {
-			mutex_unlock(&info->lock);
-			return -EINVAL;
-		}
-		start = info->fix.mmio_start;
-		len = PAGE_ALIGN((start & ~PAGE_MASK) + info->fix.mmio_len);
-	}
+
+	if ((vma->vm_end <= vma->vm_start) ||
+	   (off >= len) ||
+	   ((vma->vm_end - vma->vm_start) > (len - off)))
+               return -EINVAL;
 
 	/* Set VM flags. */
 	start &= PAGE_MASK;
-	if ((vma->vm_end - vma->vm_start + off) > len)
-		return -EINVAL;
 	off += start;
+	if (off < start)
+		return -EINVAL;
+
 	vma->vm_pgoff = off >> PAGE_SHIFT;
 	/* This is an IO map - tell maydump to skip this VMA */
 	vma->vm_flags |= VM_IO | VM_RESERVED;
@@ -1340,6 +1364,39 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 
 	var->reserved[4] = mdp_get_panel_framerate(mfd);
 
+// Jackie 20121204, correct Xdpi and Ydpi value.
+#if defined CONFIG_FB_MSM_MIPI_TRULY_OTM9608A_CMD_QHD || defined CONFIG_FB_MSM_MIPI_TRULY_OTM9608A_VIDEO_QHD
+	if (mfd->index == 0) // only for main LCD
+	{
+	        // sqrt(xres^2 + yres^2)/inch = dpi;
+	        // sqrt(540^2 + 960^2)/4.5 = 244.767;
+	        // info.width  = ((info.xres * 25.4f)/244.767f + 0.5f);
+	        // info.height = ((info.yres * 25.4f)/244.767f + 0.5f);
+	        // var->width = 57;	/* width of picture in mm */
+		// var->height = 100;	/* height of picture in mm */
+
+		// form LCM spec. => Viewing area (W/H), 56.89/100.04
+		var->width = 57;	/* width of picture in mm */
+		var->height = 100;	/* height of picture in mm */
+	}
+#endif
+
+// Jackie 20130320, correct Xdpi and Ydpi value.
+#if defined CONFIG_FB_MSM_MIPI_TRUST_NT35516_CMD_QHD || defined CONFIG_FB_MSM_MIPI_TRUST_NT35516_VIDEO_QHD
+	if (mfd->index == 0) // only for main LCD
+	{
+	        // sqrt(xres^2 + yres^2)/inch = dpi;
+	        // sqrt(540^2 + 960^2)/4.5 = 244.767;
+	        // info.width  = ((info.xres * 25.4f)/244.767f + 0.5f);
+	        // info.height = ((info.yres * 25.4f)/244.767f + 0.5f);
+	        // var->width = 57;	/* width of picture in mm */
+		// var->height = 100;	/* height of picture in mm */
+
+		// form LCM spec. => Panel Active Area (W/H), 55.485(W) x 98.64 (L)
+		var->width = 55;	/* width of picture in mm */
+		var->height = 99;	/* height of picture in mm */
+	}
+#endif
 		/*
 		 * id field for fb app
 		 */
@@ -1501,7 +1558,43 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 	/* Flip buffer */
 	if (!load_565rle_image(INIT_IMAGE_FILE, bf_supported))
 		;
+
+	if ((!mfd->ref_cnt) && (mfd->index == 0)){
+		mdp_set_dma_pan_info(fbi, NULL, TRUE);
+
+		if (msm_fb_blank_sub(FB_BLANK_UNBLANK, fbi, mfd->op_enable)) {
+			printk(KERN_ERR "msm_fb_open: can't turn on display!\n");
+			return -1;
+		}
+
+		if (mfd->panel_info.type == MIPI_CMD_PANEL)
+			mdp4_dsi_cmd_overlay(mfd);
+
+		// FIXME: It may have better way to keep display on during initlogo period.
+		//   Force +1 for keeping display on currently.
+		//   Since force +1, ref_cnt will never go back to "0".
+		//   However, it should be ok.
+		mfd->ref_cnt++;
+	}
+
 #endif
+
+// 20130325 Jackie, turn on LCM backlight
+#ifdef CONFIG_FB_MSM_BACKLIGHT_LCMPWM
+	if(mfd->index == 0)
+	{
+		// set 255: 100% (PMIC-PWM) duty cycle
+		// WLED output current = CABC(LCM duty cycle)*PWM(PM8038 setting)*ILED(LED current)
+		led_wled_set_backlight(255);
+	}
+#else
+	if(mfd->index == 0)
+	{
+		led_wled_set_backlight(64); // 64/255: 25%
+		mfd->bl_level = 64;
+	}
+#endif
+
 	ret = 0;
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -1679,13 +1772,18 @@ static int msm_fb_open(struct fb_info *info, int user)
 				info, mfd->op_enable)) {
 				MSM_FB_ERR("%s: can't turn on display!\n",
 					__func__);
-				return -EPERM;
 			}
 		}
 	}
 
 	mfd->ref_cnt++;
 	return 0;
+}
+
+// Jackie add 20130610
+static void msm_fb_free_base_pipe(struct msm_fb_data_type *mfd)
+{
+	return 	mdp4_overlay_free_base_pipe(mfd);
 }
 
 static int msm_fb_release(struct fb_info *info, int user)
@@ -1702,12 +1800,17 @@ static int msm_fb_release(struct fb_info *info, int user)
 	mfd->ref_cnt--;
 
 	if (!mfd->ref_cnt) {
-		if ((ret =
-		     msm_fb_blank_sub(FB_BLANK_POWERDOWN, info,
-				      mfd->op_enable)) != 0) {
-			printk(KERN_ERR "msm_fb_release: can't turn off display!\n");
-			return ret;
-		}
+// Jackie add 20130610
+		if (mfd->op_enable) {
+			ret = msm_fb_blank_sub(FB_BLANK_POWERDOWN, info,
+							mfd->op_enable);
+			if (ret != 0) {
+				printk(KERN_ERR "msm_fb_release: can't turn off display!\n");
+				return ret;
+			}
+		} else {
+			msm_fb_free_base_pipe(mfd);
+ 		}
 	}
 
 	pm_runtime_put(info->dev);
@@ -1738,7 +1841,9 @@ static int msm_fb_pan_display(struct fb_var_screeninfo *var,
 	struct mdp_dirty_region dirty;
 	struct mdp_dirty_region *dirtyPtr = NULL;
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
-
+#if !defined(CONFIG_FB_MSM_BACKLIGHT_LCMPWM)
+	struct msm_fb_panel_data *pdata;
+#endif
 	/*
 	 * If framebuffer is 2, io pen display is not allowed.
 	 */
@@ -1826,6 +1931,39 @@ static int msm_fb_pan_display(struct fb_var_screeninfo *var,
 	if (unset_bl_level && !bl_updated)
 		schedule_delayed_work(&mfd->backlight_worker,
 				backlight_duration);
+
+	// 20121130 Jackie
+	// To make sure BL_EN is enabled in Recovery/FTD mode.
+	// We can't enable BL_EN pin in mipi_dsi_on()
+	// because it will cause backlight on too early.
+	if( (!bl_updated) && (!bl_updated_ftd) && (mfd->dest == DISPLAY_LCD))
+	{
+// Jackie 20121130, turn on LCD backlight for FTD case.
+// use PMIC PWM
+#if !defined(CONFIG_FB_MSM_BACKLIGHT_LCMPWM)
+
+		// 20130107 Jackie, fix backlight on too early during system boot-up (before animation).
+		// In Recovery/FTD mode. Nobody will schedule the workqueue of backlight.
+		// So we need to turn on backlight by ourselves.
+		// But it will turn on backlight too early here, so wait for backlight_duration(i.e 50ms) just like it in normal mode.
+		msleep(jiffies_to_msecs(backlight_duration));
+
+		// In normal/poweroff charging mode, if original follow already turn on backlight, we don't need to do it again.
+		if(!bl_updated)
+		{
+			pdata = (struct msm_fb_panel_data *)mfd->pdev->
+				dev.platform_data;
+			if ((pdata) && (pdata->set_backlight)) {
+				down(&mfd->sem);
+				if(mfd->bl_level == 0)
+					mfd->bl_level = 1; // min. backlight value
+				pdata->set_backlight(mfd);
+				up(&mfd->sem);
+			}
+		}
+#endif
+		bl_updated_ftd = 1;
+	}
 
 	if (info->node == 0 && (mfd->cont_splash_done)) /* primary */
 		mdp_free_splash_buffer(mfd);

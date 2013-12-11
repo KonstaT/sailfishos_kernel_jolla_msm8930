@@ -16,7 +16,9 @@
 #include <linux/device.h>
 #include <linux/mutex.h>
 #include <linux/mod_devicetable.h>
-
+/* Jen Chang merge from #22852 for adding debugfs path */
+#include <linux/debugfs.h>
+/* Jen Chang, 20120924 */
 /* Interfaces between SLIMbus manager drivers and SLIMbus infrastructure. */
 
 extern struct bus_type slimbus_type;
@@ -512,6 +514,7 @@ enum slim_clk_state {
  * @port_xfer_status: Called by framework when client calls get_xfer_status
  *	API. Returns how much buffer is actually processed and the port
  *	errors (e.g. overflow/underflow) if any.
+ * @debug_ch: Debugfs data to get information about channels
  */
 struct slim_controller {
 	struct device		dev;
@@ -552,6 +555,12 @@ struct slim_controller {
 				struct completion *comp);
 	enum slim_port_err	(*port_xfer_status)(struct slim_controller *ctr,
 				u8 pn, u8 **done_buf, u32 *done_len);
+/* Jen Chang merge from #22852 for adding debugfs path */
+	struct dentry 		*debug_root;
+	struct dentry 		*debug_clkgear;
+	struct dentry		*debug_laddr;
+	struct dentry		*debug_ch;
+/* Jen Chang, 20120924 */
 };
 #define to_slim_controller(d) container_of(d, struct slim_controller, dev)
 

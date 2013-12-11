@@ -65,6 +65,8 @@ enum {
 
 struct dcs_cmd_list	cmdlist;
 
+void mipi_dsi_error(void);
+
 #ifdef CONFIG_FB_MSM_MDP40
 void mipi_dsi_mdp_stat_inc(int which)
 {
@@ -1160,8 +1162,17 @@ int mipi_dsi_cmds_tx(struct dsi_buf *tp, struct dsi_cmd_desc *cmds, int cnt)
 		mipi_dsi_buf_init(tp);
 		mipi_dsi_cmd_dma_add(tp, cm);
 		mipi_dsi_cmd_dma_tx(tp);
+
+// Jackie 20121115 modify delay of DSI tx command to reduce suspend/resume time.
+#if 0
 		if (cm->wait)
 			msleep(cm->wait);
+#else
+		if (cm->wait <= 10)
+			mdelay(cm->wait);
+		else
+			usleep_range(cm->wait*1000, cm->wait*1000);
+#endif
 		cm++;
 	}
 
@@ -1411,6 +1422,58 @@ int mipi_dsi_cmds_rx_new(struct dsi_buf *tp, struct dsi_buf *rp,
 
 	return rp->len;
 }
+static void reset_mipi_dsi_host(void)
+{
+	/* TODO : take case of 3 tx register */
+	uint32 r5c,r54,r60,r58,r3c,r40,r80,rac,rc0,rc8,r10c,r118,r00,ra8;
+	
+	r5c = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x5c);
+	r54 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x54);
+	r60 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x60);
+	r58 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x58);
+	r3c = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x3c);
+	r40 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x40);
+	r80 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x80);
+	rac = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x00ac);
+	rc0 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0xc0);
+	rc8 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0xc8);
+	r10c = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x010c);
+	r118 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x0118);
+	r00 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0x0);
+	ra8 = (uint32)MIPI_INP(MIPI_DSI_BASE + 0xA8);
+		
+	MIPI_OUTP(MIPI_DSI_BASE + 0x0000, 0);
+	msleep(10);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x114, 1);
+	msleep(10);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x114, 0);	
+	msleep(10);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x5c, r5c);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x54, r54);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x60, r60);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x58, r58);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x003c, r3c);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x0040, r40);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x38, 0x14000000);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x0080, r80);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x00ac, rac);
+	MIPI_OUTP(MIPI_DSI_BASE + 0xc0, rc0);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x00c8, rc8);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x0108, 0x13ff3fe0); 
+	MIPI_OUTP(MIPI_DSI_BASE + 0x010c, r10c);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x118,r118);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x0000, r00);
+
+	wmb();
+	msleep(10);
+	
+	MIPI_OUTP(MIPI_DSI_BASE + 0xA8,ra8);
+	wmb();
+	msleep(10);
+	
+	MIPI_OUTP(MIPI_DSI_BASE + 0x010c, r10c);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x0000, r00);
+}
 
 int mipi_dsi_cmd_dma_tx(struct dsi_buf *tp)
 {
@@ -1452,7 +1515,20 @@ int mipi_dsi_cmd_dma_tx(struct dsi_buf *tp)
 	wmb();
 	spin_unlock_irqrestore(&dsi_mdp_lock, flags);
 
-	wait_for_completion(&dsi_dma_comp);
+	if (!wait_for_completion_timeout(&dsi_dma_comp, msecs_to_jiffies(200)))
+	{
+		/* timeout after 200 ms, print log */
+		int i;
+		char *bp;
+
+		bp = tp->data;
+		for (i = 0; i < tp->len; i++)
+			printk("%x ", *bp++);
+		printk("\n");
+		mipi_dsi_error();
+		printk("%s DMA timeout: ", __func__);
+		reset_mipi_dsi_host();
+	}
 
 	dma_unmap_single(&dsi_dev, tp->dmap, tp->len, DMA_TO_DEVICE);
 	tp->dmap = 0;
@@ -1519,7 +1595,12 @@ void mipi_dsi_cmd_mdp_busy(void)
 		/* wait until DMA finishes the current job */
 		pr_debug("%s: pending pid=%d\n",
 				__func__, current->pid);
-		wait_for_completion(&dsi_mdp_comp);
+		if (!wait_for_completion_timeout(&dsi_mdp_comp, msecs_to_jiffies(200)))
+		{
+                	/* timeout after 200 ms, print log */
+                	mipi_dsi_error();
+                	printk("%s MDP DMA timeout: ", __func__);
+        	}
 	}
 	pr_debug("%s: done pid=%d\n",
 				__func__, current->pid);

@@ -344,6 +344,15 @@ config SMB349_CHARGER
 	  SMB349 be operated as a slave device via the power supply
 	  framework.
 
+# Eric Liu+
+config BATTERY_27520
+	tristate "bq27520 battery driver"
+	depends on I2C
+	default n
+	help
+	  External battery gauge driver (BQ27520)
+# Eric Liu-
+
 config BATTERY_MSM_FAKE
 	tristate "Fake MSM battery"
 	depends on ARCH_MSM && BATTERY_MSM

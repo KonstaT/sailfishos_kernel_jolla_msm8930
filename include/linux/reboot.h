@@ -67,7 +67,10 @@ extern void machine_crash_shutdown(struct pt_regs *);
 extern void kernel_restart_prepare(char *cmd);
 extern void kernel_restart(char *cmd);
 extern void kernel_halt(void);
-extern void kernel_power_off(void);
+//Terry, Add power off reason +
+//extern void kernel_power_off(void);
+extern void kernel_power_off(char *cmd);
+//Terry, Add power off reason -
 
 extern int C_A_D; /* for sysctl */
 void ctrl_alt_del(void);

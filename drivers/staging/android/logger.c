@@ -59,6 +59,9 @@ struct logger_reader {
 	size_t			r_off;	/* current read head offset */
 	bool			r_all;	/* reader can read all entries */
 	int			r_ver;	/* reader ABI version */
+	/* Bright Lee, 20130329, disable VERBOSE/DEBUG log in logcat { */
+	bool			r_all_pri; /* reader can read all priorities log */
+	/* } Bright Lee, 20130329 */
 };
 
 /* logger_offset - returns index 'n' into the log via (optimized) modulus */
@@ -215,6 +218,8 @@ static ssize_t do_read_log_to_user(struct logger_log *log,
 	return count + get_user_hdr_len(reader->r_ver);
 }
 
+/* Bright Lee, 20130329, disable VERBOSE/DEBUG log in logcat { */
+#if 1
 /*
  * get_next_entry_by_uid - Starting at 'off', returns an offset into
  * 'log->buffer' which contains the first entry readable by 'euid'
@@ -238,6 +243,36 @@ static size_t get_next_entry_by_uid(struct logger_log *log,
 
 	return off;
 }
+#else
+
+/*
+ * get_next_valid_entry - Starting at 'off', returns an offset into
+ * 'log->buffer' which contains the first entry readable by 'euid'
+ */
+static size_t get_next_valid_entry(struct logger_log *log,
+		struct logger_reader *reader, uid_t euid)
+{
+	struct logger_entry *entry;
+	struct logger_entry scratch;
+	size_t off;
+
+	for (off = reader->r_off; off != log->w_off; off = logger_offset(log, off + sizeof(struct logger_entry) + entry->len)) {
+		entry = get_entry_header(log, off, &scratch);
+
+		if (reader->r_all != 0 || entry->euid != euid)
+			continue;
+
+		if (reader->r_all_pri == 0 && log->buffer[logger_offset(log, off + sizeof(struct logger_entry))] <= 3) {
+			continue;
+		}
+
+		return off;
+	}
+
+	return off;
+}
+#endif
+/* } Bright Lee, 20130329 */
 
 /*
  * logger_read - our log's read() method
@@ -289,9 +324,17 @@ start:
 
 	mutex_lock(&log->mutex);
 
+	/* Bright Lee, 20130329, disable VERBOSE/DEBUG log in logcat { */
+	#if 1
 	if (!reader->r_all)
 		reader->r_off = get_next_entry_by_uid(log,
 			reader->r_off, current_euid());
+	#else
+	if (!reader->r_all || !reader->r_all_pri) {
+		reader->r_off = get_next_valid_entry(log, reader, current_euid());
+	}
+	#endif
+	/* } Bright Lee, 20130329 */
 
 	/* is there still something to read or did we race? */
 	if (unlikely(log->w_off == reader->r_off)) {
@@ -405,6 +448,25 @@ static void do_write_log(struct logger_log *log, const void *buf, size_t count)
 	log->w_off = logger_offset(log, log->w_off + count);
 
 }
+
+/* Bright Lee, 20120430, redirect kmsg to android main log { */
+#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+static void do_write_log_from_printk(struct logger_log *log, int idx, size_t count)
+{
+	extern int log_buf_copy_for_alog(char *dest, int idx, int len);
+	size_t len;
+
+	len = min(count, log->size - log->w_off);
+	log_buf_copy_for_alog(log->buffer + log->w_off, idx, len);
+
+	if (count != len)
+		log_buf_copy_for_alog(log->buffer, idx + len, count - len);
+
+	log->w_off = logger_offset(log, log->w_off + count);
+
+}
+#endif
+/* } Bright Lee, 20120430 */
 
 /*
  * do_write_log_user - writes 'len' bytes from the user-space buffer 'buf' to
@@ -537,6 +599,18 @@ static int logger_open(struct inode *inode, struct file *file)
 		reader->r_all = in_egroup_p(inode->i_gid) ||
 			capable(CAP_SYSLOG);
 
+		/* Bright Lee, 20130329, disable VERBOSE/DEBUG log in logcat { */
+		#if 0 /* disable first */
+		if (current_euid() <= 1000 /* AID_ROOT and AID_SYSTEM */) {
+			reader->r_all_pri = 1;
+		} else {
+			reader->r_all_pri = 0;
+		}
+		#else
+		reader->r_all_pri = 1;
+		#endif
+		/* } Bright Lee, 20130329 */
+
 		INIT_LIST_HEAD(&reader->list);
 
 		mutex_lock(&log->mutex);
@@ -596,9 +670,17 @@ static unsigned int logger_poll(struct file *file, poll_table *wait)
 	poll_wait(file, &log->wq, wait);
 
 	mutex_lock(&log->mutex);
+	/* Bright Lee, 20130329, disable VERBOSE/DEBUG log in logcat { */
+	#if 1
 	if (!reader->r_all)
 		reader->r_off = get_next_entry_by_uid(log,
 			reader->r_off, current_euid());
+	#else
+	if (!reader->r_all || !reader->r_all_pri) {
+		reader->r_off = get_next_valid_entry(log, reader, current_euid());
+	}
+	#endif
+	/* } Bright Lee, 20130329 */
 
 	if (log->w_off != reader->r_off)
 		ret |= POLLIN | POLLRDNORM;
@@ -651,9 +733,17 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		}
 		reader = file->private_data;
 
+		/* Bright Lee, 20130329, disable VERBOSE/DEBUG log in logcat { */
+	        #if 1
 		if (!reader->r_all)
 			reader->r_off = get_next_entry_by_uid(log,
 				reader->r_off, current_euid());
+		#else
+		if (!reader->r_all || !reader->r_all_pri) {
+			reader->r_off = get_next_valid_entry(log, reader, current_euid());
+		}
+	        #endif        
+	        /* } Bright Lee, 20130329 */
 
 		if (log->w_off != reader->r_off)
 			ret = get_user_hdr_len(reader->r_ver) +
@@ -687,6 +777,17 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		reader = file->private_data;
 		ret = logger_set_version(reader, argp);
 		break;
+	/* Bright Lee, 20130329, disable VERBOSE/DEBUG log in logcat { */
+	case LOGGER_ALL_PRI:
+		if (!(file->f_mode & FMODE_READ)) {
+			ret = -EBADF;
+			break;
+		}
+		reader = file->private_data;
+
+		reader->r_all_pri = 1;
+		break;
+	/* } Bright Lee, 20130328 */
 	}
 
 	mutex_unlock(&log->mutex);
@@ -728,10 +829,75 @@ static struct logger_log VAR = { \
 	.size = SIZE, \
 };
 
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 256*1024)
+/* Bright Lee, 20120430, increase log buffer size { */
+//DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 256*1024)
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 1024*1024)
 DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, 256*1024)
-DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 256*1024)
+//DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 256*1024)
+DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 512*1024)
 DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, 256*1024)
+/* } Bright Lee, 20120430 */
+
+/* Bright Lee, 20120517, reboot log { */
+#ifdef CONFIG_PANIC_LASTLOG
+#include <mach/ftags.h>
+PANIC_LOG_INIT(log_main, "main", _buf_log_main, LOGTYPE_ALOG);
+PANIC_LOG_INIT(log_events, "events", _buf_log_events, LOGTYPE_RAW); // TODO, need to trace logcat how to parse events log
+PANIC_LOG_INIT(log_radio, "radio", _buf_log_radio, LOGTYPE_ALOG);
+PANIC_LOG_INIT(log_system, "system", _buf_log_system, LOGTYPE_ALOG);
+#endif
+/* } Bright Lee, 20120517 */
+
+/* Bright Lee, 20120430, redirect kmsg to android main log { */
+#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+ssize_t logger_kernel_write(int printk_idx, int msg_len, struct timespec time, struct task_struct *task, int loglevel) // dupldate from logger_aio_write
+{
+	struct logger_log *log = &log_main;
+	struct logger_entry header;
+	ssize_t ret = 0;
+	const char tag[] = "PrintK";
+	const int tag_len = 7; // strlen(tag) + 1
+	unsigned char priority;
+
+	header.pid = task->tgid;
+	header.tid = task->pid;
+	header.sec = time.tv_sec;
+	header.nsec = time.tv_nsec;
+	header.euid = current_euid();
+	header.len = min_t(size_t, msg_len + tag_len + 1, LOGGER_ENTRY_MAX_PAYLOAD);
+	header.hdr_size = sizeof(struct logger_entry);
+
+
+	priority = 8 - loglevel;  /* 0 - > 'S', 6 -> 'V', 7 -> '?' */
+	if (priority <= 1) priority = 2;
+
+	/* null writes succeed, return zero */
+	if (unlikely(!header.len))
+		return 0;
+
+	mutex_lock(&log->mutex);
+
+	/*
+	 * Fix up any readers, pulling them forward to the first readable
+	 * entry after (what will be) the new write offset. We do this now
+	 * because if we partially fail, we can end up with clobbered log
+	 * entries that encroach on readable buffer.
+	 */
+	fix_up_readers(log, sizeof(struct logger_entry) + header.len);
+	do_write_log(log, &header, sizeof(struct logger_entry));
+	do_write_log(log, &priority, sizeof(unsigned char));
+	do_write_log(log, tag, tag_len);
+	do_write_log_from_printk(log, printk_idx, msg_len);
+
+	mutex_unlock(&log->mutex);
+
+	/* wake up any blocked readers */
+	wake_up_interruptible(&log->wq);
+
+	return ret;
+}
+#endif
+/* } Bright Lee, 20120430 */
 
 static struct logger_log *get_log_from_minor(int minor)
 {

@@ -20,6 +20,13 @@ struct msm_rpmstats_platform_data {
 	phys_addr_t phys_addr_base;
 	u32 phys_size;
 };
+/* Terry Cheng, Dump rpm stats to bufer for pm log {*/
+int msm_rpmstats_dump(char *, int );
+/* }Terry Cheng, Dump rpm stats to bufer for pm log */
+
+/* Terry Cheng, 20120601, Dump rpm sleep mode stats to bufer for pm log {*/
+int msm_rpm_sleep_stats_dump(char *, int );
+/* }Terry Cheng, 20120601, Dump rpm sleemp mode stats to bufer for pm log */
 
 struct msm_rpm_master_stats_platform_data {
 	phys_addr_t phys_addr_base;

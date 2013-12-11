@@ -595,6 +595,8 @@ static int __init bt_init(void)
 {
 	int err;
 
+	//Mark added bootlog in 2012.6.22
+	printk("BootLog, +%s\n", __func__);    
 	BT_INFO("Core ver %s", VERSION);
 
 	err = bt_sysfs_init();
@@ -622,6 +624,8 @@ static int __init bt_init(void)
 		l2cap_exit();
 		goto sock_err;
 	}
+	//Mark added bootlog in 2012.6.22
+	printk("BootLog, -%s, ret=%d\n", __func__, err);
 
 	return 0;
 

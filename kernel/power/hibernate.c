@@ -579,7 +579,10 @@ static void power_down(void)
 	case HIBERNATION_PLATFORM:
 		hibernation_platform_enter();
 	case HIBERNATION_SHUTDOWN:
-		kernel_power_off();
+		//Terry, Add power off reason +
+		//kernel_power_off();
+		kernel_power_off("Hibernation Shutdown");
+		//Terry, Add power off reason -
 		break;
 	}
 	kernel_halt();

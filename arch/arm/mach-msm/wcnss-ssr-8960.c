@@ -28,6 +28,10 @@
 #include <mach/peripheral-loader.h>
 #include "smd_private.h"
 #include "ramdump.h"
+/* Terry Cheng, 20120807, Notify logmaster riva restarted and need to move ramdump file {*/
+#include <mach/kevent.h>		
+/*} Terry Cheng, 20120807, Notify logmaster riva restarted and need to move ramdump file */
+
 
 #define MODULE_NAME			"wcnss_8960"
 #define MAX_BUF_SIZE			0x51
@@ -38,7 +42,7 @@ static struct delayed_work cancel_vote_work;
 static void *riva_ramdump_dev;
 static int riva_crash;
 static int ss_restart_inprogress;
-static int enable_riva_ssr;
+static int enable_riva_ssr = 1;	//20120803, Terry Cheng, Enable WCNSS subsystem restart
 static struct subsys_device *riva_8960_dev;
 
 struct wcnss_pmic_dump {
@@ -158,11 +162,13 @@ static void riva_post_bootup(struct work_struct *work)
 /* Subsystem handlers */
 static int riva_shutdown(const struct subsys_desc *subsys)
 {
+	pr_info(MODULE_NAME "%s + \n", __FUNCTION__);
 	pil_force_shutdown("wcnss");
+	pr_info(MODULE_NAME "%s  pil_force_shutdown done \n", __FUNCTION__);
 	flush_delayed_work(&cancel_vote_work);
 	wcnss_flush_delayed_boot_votes();
 	disable_irq_nosync(RIVA_APSS_WDOG_BITE_RESET_RDY_IRQ);
-
+	pr_info(MODULE_NAME "%s - \n", __FUNCTION__);
 	return 0;
 }
 
@@ -171,6 +177,7 @@ static int riva_powerup(const struct subsys_desc *subsys)
 	struct platform_device *pdev = wcnss_get_platform_device();
 	struct wcnss_wlan_config *pwlanconfig = wcnss_get_wlan_config();
 	int    ret = -1;
+	pr_info(MODULE_NAME "%s + \n", __FUNCTION__);
 
 	if (pdev && pwlanconfig)
 		ret = wcnss_wlan_power(&pdev->dev, pwlanconfig,
@@ -185,6 +192,7 @@ static int riva_powerup(const struct subsys_desc *subsys)
 	ss_restart_inprogress = false;
 	enable_irq(RIVA_APSS_WDOG_BITE_RESET_RDY_IRQ);
 	schedule_delayed_work(&cancel_vote_work, msecs_to_jiffies(5000));
+	pr_info(MODULE_NAME "%s - \n", __FUNCTION__);
 
 	return ret;
 }
@@ -198,13 +206,22 @@ static struct ramdump_segment riva_segments[] = {{0x8f000000,
 
 static int riva_ramdump(int enable, const struct subsys_desc *subsys)
 {
-	pr_debug("%s: enable[%d]\n", MODULE_NAME, enable);
+	/* Terry Cheng, 20120807, notify logmaster riva crash { */
+	int rc = -1;
+	pr_info("%s: enable[%d]\n", MODULE_NAME, enable);
 	if (enable)
-		return do_ramdump(riva_ramdump_dev,
+	{
+
+		rc = do_ramdump(riva_ramdump_dev,
 				riva_segments,
 				ARRAY_SIZE(riva_segments));
+		if(!rc)
+			kevent_trigger(KEVENT_RIVA_CRASH);
+		return rc;
+	}
 	else
 		return 0;
+	/* } Terry Cheng, 20120807, notify logmaster riva crash  */
 }
 
 /* Riva crash handler */
@@ -252,6 +269,11 @@ static int __init riva_ssr_module_init(void)
 {
 	int ret;
 
+	/* 8960_LA1P5_CR #:XXX, WH Lee, 20120621 */
+	/* Add Boot log */
+	printk("BootLog, +%s\n", __func__);
+	/* WH Lee, 20120621 */
+
 	ret = smsm_state_cb_register(SMSM_WCNSS_STATE, SMSM_RESET,
 					smsm_state_cb_hdlr, 0);
 	if (ret < 0) {
@@ -285,6 +307,11 @@ static int __init riva_ssr_module_init(void)
 
 	pr_info("%s: module initialized\n", MODULE_NAME);
 out:
+	/* 8960_LA1P5_CR #:XXX, WH Lee, 20120621 */
+	/* Add Boot log */
+	printk("BootLog, -%s, ret=%d\n", __func__,ret);
+	/* WH Lee, 20120621 */
+
 	return ret;
 }
 

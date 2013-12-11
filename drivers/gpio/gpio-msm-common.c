@@ -32,6 +32,17 @@
 #include <mach/mpm.h>
 #include "gpio-msm-common.h"
 
+//Terry Port show TLMM config from QCS 8660
+#include <linux/seq_file.h>
+#include <linux/debugfs.h>
+
+/* Terry Port from QCS 8660 show gpio tlmm config {*/
+#define GPIO_CONFIG(gpio)         (MSM_TLMM_BASE + 0x1000 + (0x10 * (gpio)))
+/* Bits of interest in the GPIO_CFG register.
+ */
+enum {
+	GPIO_OE_BIT = 9,
+};
 #ifdef CONFIG_GPIO_MSM_V3
 enum msm_tlmm_register {
 	SDC4_HDRV_PULL_CTL = 0x0, /* NOT USED */
@@ -200,7 +211,36 @@ static void msm_gpio_free(struct gpio_chip *chip, unsigned offset)
 {
 	msm_gpiomux_put(chip->base + offset);
 }
+/* Terry Port from QCS 8660 show gpio tlmm config {*/
+static void msm_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
+{
+	unsigned		i;
+	unsigned		gpio = chip->base;
+	unsigned int	config;
+	unsigned 	func, in_out, pull, strength;
+	const char *label;
+	static const char *pull_str[] = { "no", "down", "keeper", "up", "unknown" };
 
+	seq_printf(s, "GPIO-num  requested       FuncId  Direction  Level  Pull    Strength\n");
+	for (i = 0; i < chip->ngpio; i++, gpio++) {
+		label = gpiochip_is_requested(chip, i);
+		config = readl(GPIO_CONFIG(i));
+		func = (config & (0xf << 2)) >> 2;
+		in_out = ((config & (BIT(GPIO_OE_BIT))) >> GPIO_OE_BIT);
+		pull = config & (0x3);
+		strength = (config & (0x7 << 6)) >> 6;
+	
+		seq_printf(s, "gpio-%-3d  (%-12.12s)   %-6d  %-9.9s  %-5.5s  %-6.6s  %-3dmA",
+			gpio, 
+			label ? label : "--",
+			func,
+			in_out ? "out" : "in",
+			chip->get ? (chip->get(chip, i) ? "high" : "low ") : "?  ",
+			(pull <= GPIOMUX_PULL_UP)? pull_str[pull] : pull_str[4], (strength+1)*2);
+		seq_printf(s, "\n");
+	}
+}
+/* } Terry Port from QCS 8660 show gpio tlmm config */
 static struct msm_gpio_dev msm_gpio = {
 	.gpio_chip = {
 		.label		  = "msmgpio",
@@ -213,8 +253,44 @@ static struct msm_gpio_dev msm_gpio = {
 		.to_irq           = msm_gpio_to_irq,
 		.request          = msm_gpio_request,
 		.free             = msm_gpio_free,
+		/* Terry Port from QCS 8660 show gpio tlmm config {*/
+		.dbg_show         = msm_gpio_dbg_show,
+		/* } Terry Port from QCS 8660 show gpio tlmm config */		
 	},
 };
+
+/* Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp {*/
+void msm_gpio_dbg_show_suspend_resume_dump(void)
+{
+	unsigned		i;
+	unsigned		gpio = msm_gpio.gpio_chip.base;
+	unsigned int	config;
+	unsigned 	func, in_out, pull, strength;
+	const char *label;
+	static const char *pull_str[] = { "no", "down", "keeper", "up", "unknown" };
+	struct gpio_chip *chip = &msm_gpio.gpio_chip;
+
+	printk("GPIO-num  requested       FuncId  Direction  Level  Pull    Strength\n");
+	for (i = 0; i < chip->ngpio; i++, gpio++) {
+		label = gpiochip_is_requested(chip, i);
+		config = readl(GPIO_CONFIG(i));
+		func = (config & (0xf << 2)) >> 2;
+		in_out = ((config & (BIT(GPIO_OE_BIT))) >> GPIO_OE_BIT);
+		pull = config & (0x3);
+		strength = (config & (0x7 << 6)) >> 6;
+	
+		printk("gpio-%-3d  (%-12.12s)   %-6d  %-9.9s  %-5.5s  %-6.6s  %-3dmA",
+			gpio, 
+			label ? label : "--",
+			func,
+			in_out ? "out" : "in",
+			chip->get ? (chip->get(chip, i) ? "high" : "low ") : "?  ",
+			(pull <= GPIOMUX_PULL_UP)? pull_str[pull] : pull_str[4], (strength+1)*2);
+		printk("\n");
+	}
+}
+EXPORT_SYMBOL_GPL(msm_gpio_dbg_show_suspend_resume_dump);
+/* }Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp */
 
 static void switch_mpm_config(struct irq_data *d, unsigned val)
 {
@@ -337,14 +413,16 @@ static int msm_gpio_irq_set_type(struct irq_data *d, unsigned int flow_type)
 
 	__msm_gpio_set_intr_cfg_type(gpio, flow_type);
 
-	if ((flow_type & IRQ_TYPE_EDGE_BOTH) == IRQ_TYPE_EDGE_BOTH)
+	if ((flow_type & IRQ_TYPE_EDGE_BOTH) == IRQ_TYPE_EDGE_BOTH){
 		msm_gpio_update_dual_edge_pos(d, gpio);
 
+	} else {
+		if (msm_gpio_irq_extn.irq_set_type)
+			msm_gpio_irq_extn.irq_set_type(d, flow_type);
+	}
 	mb();
 	spin_unlock_irqrestore(&tlmm_lock, irq_flags);
 
-	if (msm_gpio_irq_extn.irq_set_type)
-		msm_gpio_irq_extn.irq_set_type(d, flow_type);
 
 	return 0;
 }
@@ -501,6 +579,8 @@ int gpio_tlmm_config(unsigned config, unsigned disable)
 {
 	unsigned gpio = GPIO_PIN(config);
 
+	//Terry Add debug log 
+	printk("%s gpio = %d, dir = %d, driver strengh = %d, func = %d, pull = %d\n", __FUNCTION__, gpio,GPIO_DIR(config),GPIO_DRVSTR(config), GPIO_FUNC(config),  GPIO_PULL(config));
 	if (gpio > NR_MSM_GPIOS)
 		return -EINVAL;
 
@@ -661,6 +741,144 @@ int __init msm_gpio_of_init(struct device_node *node,
 	return 0;
 }
 #endif
+
+/* Terry cheng, 20110829, Implement GPIO debug fs { */
+#if defined(CONFIG_DEBUG_FS)
+static unsigned int msm_gpio_num = 0;
+static unsigned int msm_gpio_debugfs_results = 0;
+
+//Config 
+static int gpio_config_set(void *data, u64 val)
+{
+	unsigned int config = val;
+	msm_gpio_num = (unsigned int)GPIO_PIN(config);
+	msm_gpio_debugfs_results= gpio_tlmm_config(config, 0);
+	return 0;
+}
+static int gpio_config_get(void *data, u64 *val)
+{
+
+	unsigned int gpio = msm_gpio_num;
+	unsigned int	config = 0;
+	config = readl(GPIO_CONFIG(gpio));
+	mb();
+	*val = 	(u64)config;
+	return 0;
+}
+//Value
+static int gpio_value_get(void *data, u64 *val)
+{
+	unsigned int	config = 0;
+	int results = 0;
+	unsigned int gpio = msm_gpio_num;
+	unsigned int 	func = 0;
+
+	//Check whether config as GPIO mode
+	config = readl(GPIO_CONFIG(gpio));
+	mb();
+	func = (config & (0xf << 2)) >> 2;
+	if(func != GPIOMUX_FUNC_GPIO)
+	{
+		printk("This GPIO TLMM config does not config as GPIO mode\n");
+		msm_gpio_debugfs_results = 1;
+		//Assign out of range value
+		*val = 255;
+		return 0;
+	}	
+	results = msm_gpio_get(&msm_gpio.gpio_chip, msm_gpio_num);
+	printk("gpio_value_get = %d\n", results);
+	*val = results;
+	return 0;
+}
+
+static int gpio_value_set(void *data, u64 val)
+{
+
+	unsigned int gpio = msm_gpio_num;
+	unsigned int	config = 0;
+	unsigned int 	in_out = 0;
+	unsigned int 	func = 0;
+
+	//Check whether config as GPIO mode
+	config = readl(GPIO_CONFIG(gpio));
+	mb();
+	func = (config & (0xf << 2)) >> 2;
+	if(func != GPIOMUX_FUNC_GPIO)
+	{
+		printk("This GPIO TLMM config does not config as GPIO mode\n");
+		msm_gpio_debugfs_results = 1;
+		return 0;
+	}
+	//Check whether output enable
+	in_out = ((config & (BIT(GPIO_OE_BIT))) >> GPIO_OE_BIT);
+	if (!in_out)
+	{
+		printk("This GPIO TLMM config does not config as output enabled\n");
+		msm_gpio_debugfs_results = 1;
+		return 0;
+	}
+	printk("gpio_value_set = %d\n", (int)val);
+	msm_gpio_set(&msm_gpio.gpio_chip, msm_gpio_num, val);
+	
+	return 0;
+}
+//Results
+static int gpio_results_get(void *data, u64 *val)
+{
+	unsigned int result = msm_gpio_debugfs_results;
+	msm_gpio_debugfs_results = 0;
+	if (result)
+		*val = 1;
+	else
+		*val = 0;
+
+	return 0;
+}
+
+static int gpio_results_set(void *data, u64 val)
+{
+	return 0;
+}
+//GPIO number
+static int gpio_num_get(void *data, u64 *val)
+{
+	*val = (u64)msm_gpio_num;
+	return 0;
+}
+
+static int gpio_num_set(void *data, u64 val)
+{
+	msm_gpio_num = (unsigned int)val;
+	printk("msm_gpio_num = %d\n", msm_gpio_num);
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(gpio_config_fops, gpio_config_get,
+						gpio_config_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(gpio_value_fops, gpio_value_get,
+						gpio_value_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(gpio_results_fops, gpio_results_get,
+						gpio_results_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(gpio_num_fops, gpio_num_get,
+						gpio_num_set, "%llu\n");
+
+static int __init gpio_debug_init(void)
+{
+	struct dentry *dent;
+	dent = debugfs_create_dir("msm_gpio", 0);
+	if (IS_ERR(dent))
+		return 0;
+
+	//Create debugfs file
+	debugfs_create_file("config", 0644, dent, 0, &gpio_config_fops);
+	debugfs_create_file("value", 0644, dent, 0, &gpio_value_fops);
+	debugfs_create_file("results", 0644, dent, 0, &gpio_results_fops);
+	debugfs_create_file("num", 0644, dent, 0, &gpio_num_fops);
+
+	return 0;
+}
+device_initcall(gpio_debug_init);
+#endif	//CONFIG_DEBUG_FS
+/* }Terry cheng, 20110829, Implement GPIO debug fs  */
 
 MODULE_AUTHOR("Gregory Bean <gbean@codeaurora.org>");
 MODULE_DESCRIPTION("Driver for Qualcomm MSM TLMMv2 SoC GPIOs");

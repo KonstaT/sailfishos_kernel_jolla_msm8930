@@ -67,6 +67,10 @@
 #define MTP_RESPONSE_OK             0x2001
 #define MTP_RESPONSE_DEVICE_BUSY    0x2019
 
+extern struct dentry *kernel_debuglevel_dir;
+static unsigned int MTP_DLL =0;
+#define mtp_printk(level,fmt,args...) if (level <= MTP_DLL) printk(fmt,##args);
+
 static const char mtp_shortname[] = "mtp_usb";
 
 struct mtp_dev {
@@ -601,7 +605,8 @@ static ssize_t mtp_write(struct file *fp, const char __user *buf,
 		req->length = xfer;
 		ret = usb_ep_queue(dev->ep_in, req, GFP_KERNEL);
 		if (ret < 0) {
-			DBG(cdev, "mtp_write: xfer error %d\n", ret);
+			//DBG(cdev, "mtp_write: xfer error %d\n", ret);
+			mtp_printk(0,"Mtp::%s:xfer error %d\n",__func__,ret);
 			r = -EIO;
 			break;
 		}
@@ -641,15 +646,13 @@ static void send_file_work(struct work_struct *data)
 	int xfer, ret, hdr_size;
 	int r = 0;
 	int sendZLP = 0;
-
+	int readfilecount =0;
 	/* read our parameters */
 	smp_rmb();
 	filp = dev->xfer_file;
 	offset = dev->xfer_file_offset;
 	count = dev->xfer_file_length;
-
-	DBG(cdev, "send_file_work(%lld %lld)\n", offset, count);
-
+	mtp_printk(1,"MTP::%s offset=%lld count=%lld",__func__,offset,count);
 	if (dev->xfer_send_header) {
 		hdr_size = sizeof(struct mtp_data_header);
 		count += hdr_size;
@@ -675,6 +678,7 @@ static void send_file_work(struct work_struct *data)
 			|| dev->state != STATE_BUSY);
 		if (dev->state == STATE_CANCELED) {
 			r = -ECANCELED;
+			mtp_printk(0,"MTP::%s cancel state\n",__func__);
 			break;
 		}
 		if (!req) {
@@ -689,6 +693,7 @@ static void send_file_work(struct work_struct *data)
 
 		if (hdr_size) {
 			/* prepend MTP data header */
+			 mtp_printk(1,"MTP::%s perpend MTP data header size=%d\n",__func__,hdr_size);
 			header = (struct mtp_data_header *)req->buf;
 			header->length = __cpu_to_le32(count);
 			header->type = __cpu_to_le16(2); /* data packet */
@@ -700,16 +705,17 @@ static void send_file_work(struct work_struct *data)
 		ret = vfs_read(filp, req->buf + hdr_size, xfer - hdr_size,
 								&offset);
 		if (ret < 0) {
+			 mtp_printk(1,"MTP::%s faild to read file to send file\n",__func__);
 			r = ret;
 			break;
 		}
 		xfer = ret + hdr_size;
 		hdr_size = 0;
-
+		readfilecount++;
 		req->length = xfer;
 		ret = usb_ep_queue(dev->ep_in, req, GFP_KERNEL);
 		if (ret < 0) {
-			DBG(cdev, "send_file_work: xfer error %d\n", ret);
+			 mtp_printk(0, "MTP::send_file_work: xfer error %d\n", ret);
 			if (dev->state != STATE_OFFLINE)
 				dev->state = STATE_ERROR;
 			r = -EIO;
@@ -724,7 +730,7 @@ static void send_file_work(struct work_struct *data)
 
 	if (req)
 		mtp_req_put(dev, &dev->tx_idle, req);
-
+	mtp_printk(1,"MTP::%s read file to send count=%lld readfileconunt=%d\n",__func__,count,readfilecount);
 	DBG(cdev, "send_file_work returning %d\n", r);
 	/* write the result */
 	dev->xfer_result = r;
@@ -751,7 +757,7 @@ static void receive_file_work(struct work_struct *data)
 	count = dev->xfer_file_length;
 
 	DBG(cdev, "receive_file_work(%lld)\n", count);
-
+	 mtp_printk(1,"MTP::%s count=%lld\n",__func__,count);
 	while (count > 0 || write_req) {
 		if (count > 0) {
 			/* queue a request */
@@ -764,6 +770,7 @@ static void receive_file_work(struct work_struct *data)
 			ret = usb_ep_queue(dev->ep_out, read_req, GFP_KERNEL);
 			if (ret < 0) {
 				r = -EIO;
+				mtp_printk(0,"MTP:: %s Faild to get data from USB deivice ret=%d\n",__func__,ret);
 				if (dev->state != STATE_OFFLINE)
 					dev->state = STATE_ERROR;
 				break;
@@ -777,6 +784,7 @@ static void receive_file_work(struct work_struct *data)
 			DBG(cdev, "vfs_write %d\n", ret);
 			if (ret != write_req->actual) {
 				r = -EIO;
+				mtp_printk(0,"MTP:: %s Failed to write vfs ret=%d\n",__func__,ret);
 				if (dev->state != STATE_OFFLINE)
 					dev->state = STATE_ERROR;
 				break;
@@ -790,6 +798,7 @@ static void receive_file_work(struct work_struct *data)
 				dev->rx_done || dev->state != STATE_BUSY);
 			if (dev->state == STATE_CANCELED
 					|| dev->state == STATE_OFFLINE) {
+				 mtp_printk(0,"MTP::%s mtp device cancel\n",__func__);
 				r = -ECANCELED;
 				if (!dev->rx_done)
 					usb_ep_dequeue(dev->ep_out, read_req);
@@ -805,7 +814,7 @@ static void receive_file_work(struct work_struct *data)
 				 * short packet is used to signal EOF for
 				 * sizes > 4 gig
 				 */
-				DBG(cdev, "got short packet\n");
+				mtp_printk(0,"MTP:: %s got short packet\n",__func__);
 				count = 0;
 			}
 
@@ -858,8 +867,11 @@ static long mtp_ioctl(struct file *fp, unsigned code, unsigned long value)
 	int ret = -EINVAL;
 
 	if (mtp_lock(&dev->ioctl_excl))
+	{
+		mtp_printk(0,"MTP:: %s mtp device busy\n",__func__);
 		return -EBUSY;
-
+	}
+	mtp_printk(1,"MTP::%s code=0x%x device state=0x%x\n",__func__,code,dev->state);
 	switch (code) {
 	case MTP_SEND_FILE:
 	case MTP_RECEIVE_FILE:
@@ -899,6 +911,7 @@ static long mtp_ioctl(struct file *fp, unsigned code, unsigned long value)
 		dev->xfer_file = filp;
 		dev->xfer_file_offset = mfr.offset;
 		dev->xfer_file_length = mfr.length;
+		mtp_printk(1,"MTP::%s offset=%lld length=%lld\n",__func__,dev->xfer_file_offset, dev->xfer_file_length);
 		smp_wmb();
 
 		if (code == MTP_SEND_FILE_WITH_HEADER) {
@@ -950,13 +963,13 @@ fail:
 	spin_unlock_irq(&dev->lock);
 out:
 	mtp_unlock(&dev->ioctl_excl);
-	DBG(dev->cdev, "ioctl returning %d\n", ret);
+	mtp_printk(1,"MTP::%s returning %d\n",__func__,ret);
 	return ret;
 }
 
 static int mtp_open(struct inode *ip, struct file *fp)
 {
-	printk(KERN_INFO "mtp_open\n");
+	 mtp_printk(0,"mtp_open\n");
 	if (mtp_lock(&_mtp_dev->open_excl))
 		return -EBUSY;
 
@@ -970,7 +983,7 @@ static int mtp_open(struct inode *ip, struct file *fp)
 
 static int mtp_release(struct inode *ip, struct file *fp)
 {
-	printk(KERN_INFO "mtp_release\n");
+	 mtp_printk(0,"mtp_release\n");
 
 	mtp_unlock(&_mtp_dev->open_excl);
 	return 0;
@@ -1239,6 +1252,17 @@ static int mtp_bind_config(struct usb_configuration *c, bool ptp_config)
 	return usb_add_function(c, &dev->function);
 }
 
+static void mtp_create_kernel_debuglevel_entries(void)
+{
+
+        if(kernel_debuglevel_dir != NULL) {
+                debugfs_create_u32("mtp_dll", S_IRUGO | S_IWUGO,
+                        kernel_debuglevel_dir, (u32 *)(&MTP_DLL));
+        } else {
+                mtp_printk(0, "%s::create kernel debuglevel dir falied\n",__func__);
+        }
+}
+
 static int mtp_setup(void)
 {
 	struct mtp_dev *dev;
@@ -1268,6 +1292,7 @@ static int mtp_setup(void)
 	_mtp_dev = dev;
 
 	ret = misc_register(&mtp_device);
+	mtp_create_kernel_debuglevel_entries();
 	if (ret)
 		goto err2;
 

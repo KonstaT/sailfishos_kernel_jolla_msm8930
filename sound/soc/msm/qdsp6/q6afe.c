@@ -21,6 +21,12 @@
 #include <sound/apr_audio.h>
 #include <sound/q6afe.h>
 
+extern unsigned int SND_DLL;
+#undef pr_debug
+#define pr_debug(fmt,args...) do { if(SND_DLL > 0) printk(fmt,##args); } while(0);
+#undef pr_info
+#define pr_info(fmt,args...) do { if(SND_DLL > 0) printk(fmt,##args); } while(0);
+
 struct afe_ctl {
 	void *apr;
 	atomic_t state;

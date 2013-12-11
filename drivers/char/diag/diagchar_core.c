@@ -113,10 +113,8 @@ void diag_drain_work_fn(struct work_struct *work)
 				 write_ptr_svc, POOL_TYPE_WRITE_STRUCT);
 		}
 		buf_hdlc = NULL;
-#ifdef DIAG_DEBUG
-		pr_debug("diag: Number of bytes written "
-				 "from timer is %d ", driver->used);
-#endif
+		diag_printk(1,"diag:%s Number of bytes written "
+				 "from timer is %d ",__func__, driver->used);
 		driver->used = 0;
 	}
 	mutex_unlock(&driver->diagchar_mutex);
@@ -207,10 +205,10 @@ static int diagchar_open(struct inode *inode, struct file *file)
 			} else {
 				mutex_unlock(&driver->diagchar_mutex);
 				pr_alert("Max client limit for DIAG reached\n");
-				pr_info("Cannot open handle %s"
-					   " %d", current->comm, current->tgid);
+				diag_printk(1,"diag:%s Cannot open handle %s"
+					   " %d", __func__,current->comm, current->tgid);
 				for (i = 0; i < driver->num_clients; i++)
-					pr_debug("%d) %s PID=%d", i, driver->
+					diag_printk(1,"(%d) %s PID=%d", i, driver->
 						client_map[i].name,
 						driver->client_map[i].pid);
 				return -ENOMEM;
@@ -532,7 +530,7 @@ long diagchar_ioctl(struct file *filp,
 			return -EFAULT;
 		mutex_lock(&driver->dci_mutex);
 		driver->num_dci_client++;
-		pr_debug("diag: id = %d\n", driver->dci_client_id);
+		diag_printk(1,"diag:%s id = %d\n",__func__, driver->dci_client_id);
 		driver->dci_client_id++;
 		for (i = 0; i < MAX_DCI_CLIENT; i++) {
 			if (driver->dci_notify_tbl[i].client == NULL) {
@@ -553,7 +551,7 @@ long diagchar_ioctl(struct file *filp,
 		mutex_lock(&driver->dci_mutex);
 		for (i = 0; i < dci_max_reg; i++) {
 			if (driver->dci_tbl[i].pid == current->tgid) {
-				pr_debug("diag: delete %d\n", current->tgid);
+				diag_printk(1,"diag:%s delete %d\n",__func__, current->tgid);
 				driver->dci_tbl[i].pid = 0;
 				success = i;
 			}
@@ -572,9 +570,9 @@ long diagchar_ioctl(struct file *filp,
 		mutex_unlock(&driver->dci_mutex);
 		for (i = 0; i < dci_max_reg; i++)
 			if (driver->dci_tbl[i].pid != 0)
-				pr_debug("diag: PID = %d, UID = %d, tag = %d\n",
+				diag_printk(1,"diag:%s PID = %d, UID = %d, tag = %d\n",__func__,
 	driver->dci_tbl[i].pid, driver->dci_tbl[i].uid, driver->dci_tbl[i].tag);
-		pr_debug("diag: complete deleting registrations\n");
+		diag_printk(1,"diag:%s complete deleting registrations\n",__func__);
 		return success;
 	} else if (iocmd == DIAG_IOCTL_DCI_SUPPORT) {
 		if (driver->ch_dci)
@@ -754,7 +752,7 @@ static int diagchar_read(struct file *file, char __user *buf, size_t count,
 		struct diag_write_device hsic_buf_tbl[NUM_HSIC_BUF_TBL_ENTRIES];
 #endif
 
-		pr_debug("diag: process woken up\n");
+		diag_printk(1,"diag:%s process woken up\n",__func__);
 		/*Copy the type of data being passed*/
 		data_type = driver->data_ready[index] & USER_SPACE_LOG_TYPE;
 		COPY_USER_SPACE_OR_EXIT(buf, data_type, 4);
@@ -763,12 +761,10 @@ static int diagchar_read(struct file *file, char __user *buf, size_t count,
 
 		for (i = 0; i < driver->poolsize_write_struct; i++) {
 			if (driver->buf_tbl[i].length > 0) {
-#ifdef DIAG_DEBUG
-				pr_debug("diag: WRITING the buf address "
-				       "and length is %x , %d\n", (unsigned int)
+				diag_printk(1,"diag:%s WRITING the buf address "
+				       "and length is %x , %d\n",__func__, (unsigned int)
 					(driver->buf_tbl[i].buf),
 					driver->buf_tbl[i].length);
-#endif
 				num_data++;
 				/* Copy the length of data being passed */
 				if (copy_to_user(buf+ret, (void *)&(driver->
@@ -787,12 +783,10 @@ static int diagchar_read(struct file *file, char __user *buf, size_t count,
 				}
 				ret += driver->buf_tbl[i].length;
 drop:
-#ifdef DIAG_DEBUG
-				pr_debug("diag: DEQUEUE buf address and"
-				       " length is %x,%d\n", (unsigned int)
+				diag_printk(1,"diag:%s DEQUEUE buf address and"
+				       " length is %x,%d\n",__func__, (unsigned int)
 				       (driver->buf_tbl[i].buf), driver->
 				       buf_tbl[i].length);
-#endif
 				diagmem_free(driver, (unsigned char *)
 				(driver->buf_tbl[i].buf), POOL_TYPE_HDLC);
 				driver->buf_tbl[i].length = 0;
@@ -898,8 +892,8 @@ drop:
 
 		for (i = 0; i < driver->poolsize_hsic_write; i++) {
 			if (hsic_buf_tbl[i].length > 0) {
-				pr_debug("diag: HSIC copy to user, i: %d, buf: %x, len: %d\n",
-					 i, (unsigned int)hsic_buf_tbl[i].buf,
+				diag_printk(1,"diag:%s HSIC copy to user, i: %d, buf: %x, len: %d\n",__func__
+					 ,i, (unsigned int)hsic_buf_tbl[i].buf,
 					hsic_buf_tbl[i].length);
 				num_data++;
 				/* Copy the length of data being passed */
@@ -1034,9 +1028,7 @@ static int diagchar_write(struct file *file, const char __user *buf,
 			      size_t count, loff_t *ppos)
 {
 	int err, ret = 0, pkt_type;
-#ifdef DIAG_DEBUG
 	int length = 0, i;
-#endif
 	struct diag_send_desc_type send = { NULL, NULL, DIAG_STATE_START, 0 };
 	struct diag_hdlc_dest_type enc = { NULL, NULL, 0 };
 	void *buf_copy = NULL;
@@ -1085,11 +1077,10 @@ static int diagchar_write(struct file *file, const char __user *buf,
 			}
 		}
 		buf = buf + 4;
-#ifdef DIAG_DEBUG
-		pr_debug("diag: user space data %d\n", payload_size);
+
+		diag_printk(1,"diag:%s user space data %d\n",__func__, payload_size);
 		for (i = 0; i < payload_size; i++)
-			pr_debug("\t %x", *((driver->user_space_data)+i));
-#endif
+			diag_printk(1,"\t %x", *((driver->user_space_data)+i));
 #ifdef CONFIG_DIAG_SDIO_PIPE
 		/* send masks to 9k too */
 		if (driver->sdio_ch) {
@@ -1162,16 +1153,16 @@ static int diagchar_write(struct file *file, const char __user *buf,
 	send.pkt = buf_copy;
 	send.last = (void *)(buf_copy + payload_size - 1);
 	send.terminate = 1;
-#ifdef DIAG_DEBUG
-	pr_debug("diag: Already used bytes in buffer %d, and"
-	" incoming payload size is %d\n", driver->used, payload_size);
+
+	diag_printk(1,"diag:%s Already used bytes in buffer %d, and"
+	" incoming payload size is %d\n",__func__, driver->used, payload_size);
 	printk(KERN_DEBUG "hdlc encoded data is -->\n");
 	for (i = 0; i < payload_size + 8; i++) {
-		printk(KERN_DEBUG "\t %x \t", *(((unsigned char *)buf_hdlc)+i));
+		diag_printk(1, "\t %x \t", *(((unsigned char *)buf_hdlc)+i));
 		if (*(((unsigned char *)buf_hdlc)+i) != 0x7e)
 			length++;
 	}
-#endif
+
 	mutex_lock(&driver->diagchar_mutex);
 	if (!buf_hdlc)
 		buf_hdlc = diagmem_alloc(driver, HDLC_OUT_BUF_SIZE,

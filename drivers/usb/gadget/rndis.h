@@ -266,5 +266,5 @@ extern void rndis_set_host_mac (int configNr, const u8 *addr);
 
 int rndis_init(void);
 void rndis_exit (void);
-
+unsigned int RNDIS_DLL =0;
 #endif  /* _LINUX_RNDIS_H */

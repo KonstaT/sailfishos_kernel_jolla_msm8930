@@ -29,6 +29,8 @@
 
 #define FUNCTIONFS_MAGIC	0xa647361 /* Chosen by a honest dice roll ;) */
 
+#define FFS_FUNCTION_NAME	"Function FS Gadget"
+
 
 /* Debugging ****************************************************************/
 
@@ -37,6 +39,7 @@
 #  define ffs_dump_mem(prefix, ptr, len) \
 	print_hex_dump_bytes(pr_fmt(prefix ": "), DUMP_PREFIX_NONE, ptr, len)
 #else
+#undef pr_vdebug
 #  define pr_vdebug(...)                 do { } while (0)
 #  define ffs_dump_mem(prefix, ptr, len) do { } while (0)
 #endif /* VERBOSE_DEBUG */
@@ -1448,7 +1451,7 @@ static int functionfs_bind_config(struct usb_composite_dev *cdev,
 	if (unlikely(!func))
 		return -ENOMEM;
 
-	func->function.name    = "Function FS Gadget";
+	func->function.name    = FFS_FUNCTION_NAME;
 	func->function.strings = ffs->stringtabs;
 
 	func->function.bind    = ffs_func_bind;

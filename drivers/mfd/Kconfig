@@ -106,6 +106,16 @@ config UCB1400_CORE
 	  To compile this driver as a module, choose M here: the
 	  module will be called ucb1400_core.
 
+config TOH
+	tristate "The Other Half smart cover driver"
+	depends on I2C
+	select EEPROM_AT24
+	help
+	  This option enables support for The Other Half smart covers in Jolla
+	  smart phones. Main functions of the driver are to allow access to
+	  configuration data on eeprom, and to instantiate other devices based
+	  on the configuration data.
+
 config TPS6105X
 	tristate "TPS61050/61052 Boost Converters"
 	depends on I2C

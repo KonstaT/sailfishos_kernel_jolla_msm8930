@@ -317,6 +317,49 @@ do { \
 	pr_err(fmt); \
 } while (0)
 
+/* Terry Cheng, 20121128, Add bam debug log {*/
+/**
+ * For debug use.
+ */
+static void bam_dmux_log_debug(const char *fmt)
+{
+	char buff[LOG_MESSAGE_MAX_SIZE];
+	int len = 0;
+
+	if (bam_dmux_state_logging_disabled)
+		return;
+
+	/*
+	 * States
+	 * D: 1 = Power collapse disabled
+	 * R: 1 = in global reset
+	 * P: 1 = BAM is powered up
+	 * A: 1 = BAM initialized and ready for data
+	 *
+	 * V: 1 = Uplink vote for power
+	 * U: 1 = Uplink active
+	 * W: 1 = Uplink Wait-for-ack
+	 * A: 1 = Uplink ACK received
+	 * #: >=1 On-demand uplink vote
+	 * D: 1 = Disconnect ACK active
+	 */
+	len += scnprintf(buff, sizeof(buff),
+		"<DMUX> %c%c%c%c %c%c%c%c%d%c ",
+		a2_pc_disabled ? 'D' : 'd',
+		in_global_reset ? 'R' : 'r',
+		bam_dmux_power_state ? 'P' : 'p',
+		bam_connection_is_active ? 'A' : 'a',
+		bam_dmux_uplink_vote ? 'V' : 'v',
+		bam_is_connected ?  'U' : 'u',
+		wait_for_ack ? 'W' : 'w',
+		ul_wakeup_ack_completion.done ? 'A' : 'a',
+		atomic_read(&ul_ondemand_vote),
+		disconnect_ack ? 'D' : 'd'
+		);
+	printk(KERN_INFO "%s %s", buff, fmt);
+}
+/* } Terry Cheng, 20121128, Add bam debug log */
+
 /**
  * Log a state change along with a small message.
  *
@@ -1787,6 +1830,7 @@ static void ul_wakeup(void)
 		if (unlikely(ret == 0) && ssrestart_check()) {
 			mutex_unlock(&wakeup_lock);
 			bam_dmux_log("%s timeout previous ack\n", __func__);
+			bam_dmux_log_debug("timeout previous ack\n");//Terry Cheng, 20121128, Add bam debug log 
 			return;
 		}
 	}
@@ -1797,6 +1841,7 @@ static void ul_wakeup(void)
 	if (unlikely(ret == 0) && ssrestart_check()) {
 		mutex_unlock(&wakeup_lock);
 		bam_dmux_log("%s timeout wakeup ack\n", __func__);
+		bam_dmux_log_debug("timeout wakeup ack\n");//Terry Cheng, 20121128, Add bam debug log 
 		return;
 	}
 	bam_dmux_log("%s waiting completion\n", __func__);
@@ -1804,6 +1849,7 @@ static void ul_wakeup(void)
 	if (unlikely(ret == 0) && ssrestart_check()) {
 		mutex_unlock(&wakeup_lock);
 		bam_dmux_log("%s timeout power on\n", __func__);
+		bam_dmux_log_debug("timeout power on\n");//Terry Cheng, 20121128, Add bam debug log 
 		return;
 	}
 

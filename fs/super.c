@@ -36,6 +36,13 @@
 #include "internal.h"
 
 
+/* Terry Cheng, 20120119, Add work round. Not remount /data as read only to save power off log {*/
+#define IGNORE_REMOUNT_OEM_LOG_AS_READ_ONLY 1
+#ifdef IGNORE_REMOUNT_OEM_LOG_AS_READ_ONLY
+#include "ext4/ext4.h"
+#endif //IGNORE_REMOUNT_OEM_LOG_AS_READ_ONLY
+/* } Terry Cheng, 20120119, Add work round. Not remount /data as read only to save power off log */
+
 LIST_HEAD(super_blocks);
 DEFINE_SPINLOCK(sb_lock);
 
@@ -795,6 +802,17 @@ static void do_emergency_remount(struct work_struct *work)
 	list_for_each_entry(sb, &super_blocks, s_list) {
 		if (hlist_unhashed(&sb->s_instances))
 			continue;
+/* Terry Cheng, 20120119, Add work round. Not remount /data as read only to save power off log {*/		
+#ifdef IGNORE_REMOUNT_OEM_LOG_AS_READ_ONLY 
+			if(sb->s_type){
+				if(!strcmp(sb->s_type->name, "ext4")){
+					struct ext4_super_block *es = EXT4_SB(sb)->s_es;
+					if(es && !strcmp(es->s_last_mounted, "/var"))	//20120514, Save log to /var
+						continue;	
+				}	
+			}	
+#endif 	//IGNORE_REMOUNT_OEM_LOG_AS_READ_ONLY		
+/*} Terry Cheng, 20120119, Add work round. Not remount /data as read only to save power off log */		
 		sb->s_count++;
 		spin_unlock(&sb_lock);
 		down_write(&sb->s_umount);

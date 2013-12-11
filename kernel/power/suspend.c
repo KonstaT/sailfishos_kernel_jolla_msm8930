@@ -328,6 +328,7 @@ int pm_suspend(suspend_state_t state)
 		return -EINVAL;
 
 	pm_suspend_marker("entry");
+	suspend_stats.entry++;//20130313, Add check total_try_suspend_count. If total_try_suspend_count == 0, it means wakelock does not unlock. 
 	error = enter_state(state);
 	if (error) {
 		suspend_stats.fail++;

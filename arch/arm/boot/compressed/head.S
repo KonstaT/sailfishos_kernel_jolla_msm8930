@@ -131,6 +131,12 @@ start:
 		.word	0x016f2818		@ Magic numbers to help the loader
 		.word	start			@ absolute load/run zImage address
 		.word	_edata			@ zImage end address
+		/* Bright Lee, 20120517 { */
+		#ifdef CONFIG_PANIC_LASTLOG
+		.globl  input_data_end
+		.word   input_data_end
+		#endif
+		/* } Bright Lee, 20120517 */
  THUMB(		.thumb			)
 1:		mov	r7, r1			@ save architecture ID
 		mov	r8, r2			@ save atags pointer

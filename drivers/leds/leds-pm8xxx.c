@@ -20,10 +20,17 @@
 #include <linux/leds.h>
 #include <linux/workqueue.h>
 #include <linux/err.h>
-
+#include <linux/debugfs.h>
 #include <linux/mfd/pm8xxx/core.h>
 #include <linux/mfd/pm8xxx/pwm.h>
 #include <linux/leds-pm8xxx.h>
+#include <linux/delay.h>
+
+/*add for PM_log*/
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif
+/*Carl Chang,20120528*/
 
 #define SSBI_REG_ADDR_DRV_KEYPAD	0x48
 #define PM8XXX_DRV_KEYPAD_BL_MASK	0xf0
@@ -70,6 +77,10 @@
 #define WLED_CTL_DLY_BIT_SHFT		0x05
 #define WLED_MAX_CURR			25
 #define WLED_MAX_CURR_MASK		0x1F
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) || defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+#define WLED_MAX_DUTY_CYCLE_MASK 	0x0F
+#define WLED_CTL_DLY_MIN 		0
+#endif
 #define WLED_OP_FDBCK_MASK		0x1C
 #define WLED_OP_FDBCK_BIT_SHFT		0x02
 
@@ -114,6 +125,14 @@
 #define MAX_FLASH_BRIGHTNESS		15
 #define MAX_KB_LED_BRIGHTNESS		15
 
+//---------------------------------------------
+// 20130325 Jackie, Add support for LED1&LED2 CABC enable, Start
+// WLED_CABC pin, it should add this when "CONFIG_FB_MSM_BACKLIGHT_LCMPWM" was enabled.
+#define WLED_CABC_ENABLE_MASK 0x38
+#define WLED_CABC_ENABLE_LED1_LED2 0x18
+// Add support for LED1&LED2 CABC enable, End
+//---------------------------------------------
+
 #define PM8XXX_LED_OFFSET(id) ((id) - PM8XXX_ID_LED_0)
 
 #define PM8XXX_LED_PWM_FLAGS	(PM_PWM_LUT_LOOP | PM_PWM_LUT_RAMP_UP)
@@ -138,6 +157,8 @@
  * @version - version of PMIC
  * @supported - which leds are supported on version
  */
+//Leon
+static struct pm8xxx_led_data *led, *led_dat;
 
 struct supported_leds {
 	enum pm8xxx_version version;
@@ -151,6 +172,10 @@ static const struct supported_leds led_map[] = {
 	LED_MAP(PM8XXX_VERSION_8922, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1),
 	LED_MAP(PM8XXX_VERSION_8038, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1),
 };
+//============================================================================//
+//  debugfs
+//============================================================================//
+#define LED_PRINTK(format, arg...)  {printk(KERN_INFO "[LED]" format "\n", ## arg);}
 
 /**
  * struct pm8xxx_led_data - internal led data structure
@@ -174,10 +199,18 @@ struct pm8xxx_led_data {
 	struct mutex		lock;
 	struct pwm_device	*pwm_dev;
 	int			pwm_channel;
+	u32			blink_delay_on;//Carl Chang   ,20120622
+	u32			blink_delay_off;//Carl Chang   ,20120622
 	u32			pwm_period_us;
 	struct pm8xxx_pwm_duty_cycles *pwm_duty_cycles;
 	struct wled_config_data *wled_cfg;
 	int			max_current;
+	int fvs_mode_onoff_flag;
+/*add for PM_log*/
+#ifdef CONFIG_PM_LOG
+        struct pmlog_device *pmlog_device;
+#endif
+/*Carl Chang,20120528*/
 };
 
 static void led_kp_set(struct pm8xxx_led_data *led, enum led_brightness value)
@@ -242,6 +275,131 @@ led_flash_set(struct pm8xxx_led_data *led, enum led_brightness value)
 			 led->id, rc);
 }
 
+// 20130116 Jackie, to switch WLED_DRV1/WLED_DRV2 on/off
+int switch_wled(int led_num , int enable) 
+{ 
+	int rc; 
+	u8 val; 
+	u16 addr = 0x25A;
+
+	rc = pm8xxx_readb(led->dev->parent, addr, &val); 
+
+	val &= ~(1<<(led_num)); 
+
+	if(enable) 
+		val |= (1<<(led_num)); 
+	else 
+		val |= 0; 
+
+	rc = pm8xxx_writeb(led->dev->parent, addr, val); 
+	return rc; 
+}
+
+int
+led_wled_set_backlight(enum led_brightness value)
+{
+	int rc, duty;
+	u8 val, i, num_wled_strings;
+
+	if (value > WLED_MAX_LEVEL)
+		value = WLED_MAX_LEVEL;
+
+	if (value == 0) {
+		rc = pm8xxx_writeb(led->dev->parent, WLED_MOD_CTRL_REG,
+				WLED_BOOST_OFF);
+		if (rc) {
+			dev_err(led->dev->parent, "can't write wled ctrl config"
+				" register rc=%d\n", rc);
+			return rc;
+		}
+	} else {
+		rc = pm8xxx_writeb(led->dev->parent, WLED_MOD_CTRL_REG,
+				led->wled_mod_ctrl_val);
+		if (rc) {
+			dev_err(led->dev->parent, "can't write wled ctrl config"
+				" register rc=%d\n", rc);
+			return rc;
+		}
+	}
+
+	duty = (WLED_MAX_DUTY_CYCLE * value) / WLED_MAX_LEVEL;
+
+	num_wled_strings = led->wled_cfg->num_strings;
+
+	/* program brightness control registers */
+	for (i = 0; i < num_wled_strings; i++) {
+		rc = pm8xxx_readb(led->dev->parent,
+				WLED_BRIGHTNESS_CNTL_REG1(i), &val);
+		if (rc) {
+			dev_err(led->dev->parent, "can't read wled brightnes ctrl"
+				" register1 rc=%d\n", rc);
+			return rc;
+		}
+
+		val = (val & ~WLED_MAX_DUTY_CYCLE_MASK) | (duty >> WLED_8_BIT_SHFT);
+		rc = pm8xxx_writeb(led->dev->parent,
+				WLED_BRIGHTNESS_CNTL_REG1(i), val);
+		if (rc) {
+			dev_err(led->dev->parent, "can't write wled brightness ctrl"
+				" register1 rc=%d\n", rc);
+			return rc;
+		}
+
+		val = duty & WLED_8_BIT_MASK;
+		rc = pm8xxx_writeb(led->dev->parent,
+				WLED_BRIGHTNESS_CNTL_REG2(i), val);
+		if (rc) {
+			dev_err(led->dev->parent, "can't write wled brightness ctrl"
+				" register2 rc=%d\n", rc);
+			return rc;
+		}
+	}
+
+//---------------------------------------------
+// 20130325 Jackie, Add support for LED1&LED2 CABC enable, Start
+// WLED_CABC pin, it should add this when "CONFIG_FB_MSM_BACKLIGHT_LCMPWM" was enabled.
+	rc = pm8xxx_readb(led->dev->parent,
+				WLED_SYNC_REG, &val);
+	if (rc) {
+		dev_err(led->dev->parent, "can't read wled ctrl register 11"
+			" register1 rc=%d\n", rc);
+		return rc;
+	}
+	val &= ~WLED_CABC_ENABLE_MASK;
+#if defined(CONFIG_FB_MSM_BACKLIGHT_LCMPWM)
+	// Enable PM8038 Ext-CABC
+	val |= WLED_CABC_ENABLE_LED1_LED2;
+#endif
+	rc = pm8xxx_writeb(led->dev->parent, WLED_SYNC_REG, val);
+	if (rc) {
+		dev_err(led->dev->parent, "can't write wled ctrl register 11"
+			" register1 rc=%d\n", rc);
+		return rc;
+	}	
+// Add support for LED1&LED2 CABC enable, End
+//---------------------------------------------
+
+	/* sync */
+	val &= WLED_SYNC_MASK;
+	val |= WLED_SYNC_VAL;
+	rc = pm8xxx_writeb(led->dev->parent, WLED_SYNC_REG, val);
+	if (rc) {
+		dev_err(led->dev->parent,
+			"can't read wled sync register rc=%d\n", rc);
+		return rc;
+	}
+
+	val &= WLED_SYNC_MASK;
+	val |= WLED_SYNC_RESET_VAL;
+	rc = pm8xxx_writeb(led->dev->parent, WLED_SYNC_REG, val);
+	if (rc) {
+		dev_err(led->dev->parent,
+			"can't read wled sync register rc=%d\n", rc);
+		return rc;
+	}
+	return 0;
+}
+
 static int
 led_wled_set(struct pm8xxx_led_data *led, enum led_brightness value)
 {
@@ -283,7 +441,11 @@ led_wled_set(struct pm8xxx_led_data *led, enum led_brightness value)
 			return rc;
 		}
 
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) || defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+		val = (val & ~WLED_MAX_DUTY_CYCLE_MASK) | (duty >> WLED_8_BIT_SHFT);
+#else
 		val = (val & ~WLED_MAX_CURR_MASK) | (duty >> WLED_8_BIT_SHFT);
+#endif
 		rc = pm8xxx_writeb(led->dev->parent,
 				WLED_BRIGHTNESS_CNTL_REG1(i), val);
 		if (rc) {
@@ -394,15 +556,83 @@ led_rgb_set(struct pm8xxx_led_data *led, enum led_brightness value)
 	}
 }
 
+/*Add for blink*/
+
+static ssize_t led_blink_delay_on_store(struct device *dev,
+                struct device_attribute *attr, const char *buf, size_t size)
+{
+        struct pm8xxx_led_data *led = dev_get_drvdata(dev);
+        ssize_t ret = -EINVAL;
+        unsigned long state = 0;
+        ret = strict_strtoul(buf, 10, &state);
+        if (!ret){
+                ret = size;
+                led->blink_delay_on = state;
+        }
+        return ret;
+}
+static ssize_t led_blink_delay_on_show(struct device *dev,
+                struct device_attribute *attr, char *buf)
+{
+        struct pm8xxx_led_data *led = dev_get_drvdata(dev);
+        int LED_BUFF_SIZE = 50;
+
+        return snprintf(buf, LED_BUFF_SIZE, "%u\n", led->blink_delay_on);
+}
+
+
+static ssize_t led_blink_delay_off_store(struct device *dev,
+                struct device_attribute *attr, const char *buf, size_t size)
+{
+        struct pm8xxx_led_data *led = dev_get_drvdata(dev);
+        ssize_t ret = -EINVAL;
+        unsigned long state = 0;
+        ret = strict_strtoul(buf, 10, &state);
+        if (!ret){
+                ret = size;
+                led->blink_delay_off = state;
+        }
+        return ret;
+}
+static ssize_t led_blink_delay_off_show(struct device *dev,
+                struct device_attribute *attr, char *buf)
+{
+        struct pm8xxx_led_data *led = dev_get_drvdata(dev);
+        int LED_BUFF_SIZE = 50;
+
+        return snprintf(buf, LED_BUFF_SIZE, "%u\n", led->blink_delay_off);
+}
+
+static struct device_attribute led_pm8xxx_attrs[] = {
+        __ATTR(blink_delay_on, 0644, led_blink_delay_on_show,
+                        led_blink_delay_on_store),
+        __ATTR(blink_delay_off, 0644, led_blink_delay_off_show,
+                        led_blink_delay_off_store),
+        //__ATTR_NULL,
+};
+
+/*Carl chang ,20120622*/
+
 static int pm8xxx_led_pwm_work(struct pm8xxx_led_data *led)
 {
 	int duty_us;
 	int rc = 0;
+	u32 delay_on_us,delay_off_us;
+	//printk("%s ,brightness = %d , blink_delay_on = %u ms ,blink_delay_off = %u ms \n"
+	//	,led->cdev.name,led->cdev.brightness,led->blink_delay_on,led->blink_delay_off );/*Carl Chang*/
 
 	if (led->pwm_duty_cycles == NULL) {
-		duty_us = (led->pwm_period_us * led->cdev.brightness) /
-								LED_FULL;
-		rc = pwm_config(led->pwm_dev, duty_us, led->pwm_period_us);
+		/*modify for blink*/
+		if (led->blink_delay_on == 0 || led->blink_delay_off == 0){
+			duty_us = (led->pwm_period_us * led->cdev.brightness) /
+									LED_FULL;
+			rc = pwm_config(led->pwm_dev, duty_us, led->pwm_period_us);
+		}else{
+			delay_on_us = led->blink_delay_on * 1000;
+			delay_off_us = led->blink_delay_off * 1000;
+			rc = pwm_config(led->pwm_dev, delay_on_us, (delay_on_us+delay_off_us));	
+		}
+		/*Carl Chang , 20120622*/
 		if (led->cdev.brightness) {
 			led_rgb_write(led, SSBI_REG_ADDR_RGB_CNTL1,
 				led->cdev.brightness);
@@ -473,6 +703,15 @@ static void pm8xxx_led_work(struct work_struct *work)
 	if (led->pwm_dev == NULL) {
 		__pm8xxx_led_work(led, led->cdev.brightness);
 	} else {
+                //Carl Chang+, add for Workaround PM8038 PWM has 2 flip flops ,QC SR01061393
+                if (led->cdev.brightness) { 
+                        rc = pm8xxx_led_pwm_work(led);
+                        if (rc)
+                                pr_err("could not configure PWM mode for LED:%d\n",
+                                                                led->id);
+                        msleep(5);
+                }
+                //Carl Chang-
 		rc = pm8xxx_led_pwm_work(led);
 		if (rc)
 			pr_err("could not configure PWM mode for LED:%d\n",
@@ -484,6 +723,10 @@ static void pm8xxx_led_set(struct led_classdev *led_cdev,
 	enum led_brightness value)
 {
 	struct	pm8xxx_led_data *led;
+        /*add for PM_log*/
+#ifdef CONFIG_PM_LOG
+	int rc =0;
+#endif //CONFIG_PM_LOG
 
 	led = container_of(led_cdev, struct pm8xxx_led_data, cdev);
 
@@ -491,14 +734,33 @@ static void pm8xxx_led_set(struct led_classdev *led_cdev,
 		dev_err(led->cdev.dev, "Invalid brightness value exceeds");
 		return;
 	}
+	/*add for PM_log*/
+#ifdef CONFIG_PM_LOG
+	if (value == 0 ){
+                rc = pmlog_device_off(led->pmlog_device);
+                if (rc)
+                        printk("pmlog_device_off fall rc = %d\n",rc);
+	}else{
+		rc = pmlog_device_on(led->pmlog_device);
+                if (rc)
+                        printk("pmlog_device_on fall rc = %d\n",rc);
+	}
+#endif
+	/*Carl Chang,20120528*/
 
+	if (led->fvs_mode_onoff_flag == 0) {
 	led->cdev.brightness = value;
 	schedule_work(&led->work);
+	}else {
+		printk("%s,led:in ftd test mode!!!\n", __func__);
+	}	
 }
 
 static int pm8xxx_set_led_mode_and_max_brightness(struct pm8xxx_led_data *led,
 		enum pm8xxx_led_modes led_mode, int max_current)
 {
+	int rc = 0;
+
 	switch (led->id) {
 	case PM8XXX_ID_LED_0:
 	case PM8XXX_ID_LED_1:
@@ -544,10 +806,12 @@ static int pm8xxx_set_led_mode_and_max_brightness(struct pm8xxx_led_data *led,
 		break;
 	default:
 		dev_err(led->cdev.dev, "LED Id is invalid");
-		return -EINVAL;
+		rc = -EINVAL;
+		pr_err("LED Id is invalid");
+		break;
 	}
 
-	return 0;
+	return rc;
 }
 
 static enum led_brightness pm8xxx_led_get(struct led_classdev *led_cdev)
@@ -647,6 +911,16 @@ static int __devinit init_wled(struct pm8xxx_led_data *led)
 			return rc;
 		}
 
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) || defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+		if ((led->wled_cfg->ctrl_delay_us < WLED_CTL_DLY_MIN) ||
+			(led->wled_cfg->ctrl_delay_us > WLED_CTL_DLY_MAX)) {
+			dev_err(led->dev->parent, "Invalid control delay\n");
+			return rc;
+		}
+
+		val = (val & ~WLED_CTL_DLY_MASK) |
+			(num_wled_strings << WLED_CTL_DLY_BIT_SHFT);
+#else
 		if ((led->wled_cfg->ctrl_delay_us % WLED_CTL_DLY_STEP) ||
 			(led->wled_cfg->ctrl_delay_us > WLED_CTL_DLY_MAX)) {
 			dev_err(led->dev->parent, "Invalid control delay\n");
@@ -656,6 +930,7 @@ static int __devinit init_wled(struct pm8xxx_led_data *led)
 		val = val / WLED_CTL_DLY_STEP;
 		val = (val & ~WLED_CTL_DLY_MASK) |
 			(led->wled_cfg->ctrl_delay_us << WLED_CTL_DLY_BIT_SHFT);
+#endif
 
 		if ((led->max_current > WLED_MAX_CURR)) {
 			dev_err(led->dev->parent, "Invalid max current\n");
@@ -719,6 +994,24 @@ static int __devinit init_wled(struct pm8xxx_led_data *led)
 
 	val |= WLED_EN_MASK;
 
+#if defined(CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A) || defined(CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516)
+	switch (num_wled_strings) {
+		case ONE_WLED_STRING:
+			val = WLED_CABC_ONE_STRING;
+			break;
+		case TWO_WLED_STRINGS:
+			val = WLED_CABC_TWO_STRING;
+			break;
+		case THREE_WLED_STRINGS:
+			val = WLED_CABC_THREE_STRING;
+			break;
+		default:
+			val = WLED_CABC_ONE_STRING;
+			break;
+	}
+	val = (val<<4) | (val<<1) | 0x1; // bit0: strings on/off
+#endif
+
 	rc = pm8xxx_writeb(led->dev->parent, WLED_MOD_CTRL_REG, val);
 	if (rc) {
 		dev_err(led->dev->parent, "can't write wled module ctrl"
@@ -777,6 +1070,37 @@ static int __devinit get_init_value(struct pm8xxx_led_data *led, u8 *val)
 
 	return rc;
 }
+static int dbg_led_brightness_set(void *data, u64 value)
+{
+	struct	pm8xxx_led_data *led = (struct pm8xxx_led_data *)data;
+	
+	if (value == 9999) {
+		led->fvs_mode_onoff_flag = 0; /* exit fvs mode */
+		printk("%s,led:exit ftd test mode\n", __func__);
+		
+	}else {
+		led->fvs_mode_onoff_flag = 1; 
+        if (value < LED_OFF || value > led->cdev.max_brightness) {
+                dev_err(led->cdev.dev, "Invalid brightness value exceeds");
+                return -1;
+        }
+			led->cdev.brightness = value;
+        schedule_work(&led->work);
+	}	
+        
+	return 0;
+}
+static int dbg_led_brightness_get(void *data, u64 *value)
+{
+	struct pm8xxx_led_data *led = (struct pm8xxx_led_data *)data;
+	
+	*value = led->cdev.brightness;
+	return 0;
+	
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(dbg_led_brightness_fops,
+                        dbg_led_brightness_get, dbg_led_brightness_set, "%lld\n");
 
 static int pm8xxx_led_pwm_configure(struct pm8xxx_led_data *led)
 {
@@ -825,11 +1149,13 @@ static int __devinit pm8xxx_led_probe(struct platform_device *pdev)
 	const struct pm8xxx_led_platform_data *pdata = pdev->dev.platform_data;
 	const struct led_platform_data *pcore_data;
 	struct led_info *curr_led;
-	struct pm8xxx_led_data *led, *led_dat;
+//	struct pm8xxx_led_data *led, *led_dat;
 	struct pm8xxx_led_config *led_cfg;
 	enum pm8xxx_version version;
 	bool found = false;
-	int rc, i, j;
+	int rc, i,j,ret=0;
+	static struct dentry *dent;
+	static struct dentry *temp_dent, *temp;
 
 	if (pdata == NULL) {
 		dev_err(&pdev->dev, "platform data not supplied\n");
@@ -850,6 +1176,14 @@ static int __devinit pm8xxx_led_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+	/* create debugfs for ftd and FVS test */
+	dent = debugfs_create_dir("pm8xxx-led-dbg", NULL);
+    if (dent == NULL || IS_ERR(dent)) {
+        pr_err("ERR debugfs_create_dir: dent=%p\n", dent);
+            rc = -ENOMEM;
+            return -ENOMEM;
+    }
+	/* Emily, 20120129 */
 	for (i = 0; i < pcore_data->num_leds; i++) {
 		curr_led	= &pcore_data->leds[i];
 		led_dat		= &led[i];
@@ -861,6 +1195,7 @@ static int __devinit pm8xxx_led_probe(struct platform_device *pdev)
 		led_dat->pwm_duty_cycles = led_cfg->pwm_duty_cycles;
 		led_dat->wled_cfg = led_cfg->wled_cfg;
 		led_dat->max_current = led_cfg->max_current;
+		led_dat->fvs_mode_onoff_flag = 0;
 
 		if (!((led_dat->id >= PM8XXX_ID_LED_KB_LIGHT) &&
 				(led_dat->id < PM8XXX_ID_MAX))) {
@@ -906,6 +1241,11 @@ static int __devinit pm8xxx_led_probe(struct platform_device *pdev)
 			goto fail_id_check;
 
 		mutex_init(&led_dat->lock);
+		/*Register PM_log*/
+#ifdef CONFIG_PM_LOG
+        	led_dat->pmlog_device = pmlog_register_device(&pdev->dev);
+#endif
+        	/*Carl Chang,20120528*/
 		INIT_WORK(&led_dat->work, pm8xxx_led_work);
 
 		rc = led_classdev_register(&pdev->dev, &led_dat->cdev);
@@ -914,13 +1254,39 @@ static int __devinit pm8xxx_led_probe(struct platform_device *pdev)
 						 led_dat->id, rc);
 			goto fail_id_check;
 		}
+		/*Add for blink*/
+		led_dat->blink_delay_on = 0;
+		led_dat->blink_delay_off = 0;
+		for(j=0; j<ARRAY_SIZE(led_pm8xxx_attrs); j++){
+			ret = device_create_file(led_dat->cdev.dev,&led_pm8xxx_attrs[j]);
+			if (ret)	
+				pr_err("[leds-pm8xxx.c]function %s create led_pm8xxx_attrs[%d] failed!! \n",__func__,j);
+		}
+		/*Carl Chang ,20120622*/
 
+                /* create debugfs for ftd and FVS test */
+                temp_dent = debugfs_create_dir(led_dat->cdev.name, dent);
+        if (temp_dent == NULL || IS_ERR(temp_dent)) {
+            pr_err("ERR: led=%d: dir: temp_dent=%p\n", i, temp_dent);
+                goto fail_id_check;
+        }
+
+                /* modiy debugfs permission */
+        temp = debugfs_create_file("brightness", S_IRUGO | S_IWUGO,
+                temp_dent, led_dat, &dbg_led_brightness_fops);
+                /* Emily, 20120217 */
+        if (temp == NULL || IS_ERR(temp)) {
+            pr_err("ERR: led=%d: brightness: temp=%p\n", i, temp);
+                goto fail_id_check;
+        }
+            /* Emily, 20120129 */
+#if 0
 		/* configure default state */
 		if (led_cfg->default_state)
 			led->cdev.brightness = led_dat->cdev.max_brightness;
 		else
 			led->cdev.brightness = LED_OFF;
-
+#endif
 		if (led_cfg->mode != PM8XXX_LED_MODE_MANUAL) {
 			if (led_dat->id == PM8XXX_ID_RGB_LED_RED ||
 				led_dat->id == PM8XXX_ID_RGB_LED_GREEN ||
@@ -941,12 +1307,20 @@ static int __devinit pm8xxx_led_probe(struct platform_device *pdev)
 			schedule_work(&led->work);
 			}
 		} else {
-			__pm8xxx_led_work(led_dat, led->cdev.brightness);
+			__pm8xxx_led_work(led_dat, LED_OFF);
 		}
 	}
 
 	platform_set_drvdata(pdev, led);
 
+// 20130325 Jackie, if CONFIG_LCM_KEEP_SPLASH, turn on LCM backlight immediately.
+#ifdef CONFIG_FB_MSM_BACKLIGHT_LCMPWM
+	// set 255: 100% (PMIC-PWM) duty cycle
+	// WLED output current = CABC(LCM duty cycle)*PWM(PM8038 setting)*ILED(LED current)
+	led_wled_set_backlight(255);
+#else
+	led_wled_set_backlight(64); // 64/255: 25%
+#endif
 	return 0;
 
 fail_id_check:
@@ -976,6 +1350,11 @@ static int __devexit pm8xxx_led_remove(struct platform_device *pdev)
 		if (led[i].pwm_dev != NULL)
 			pwm_free(led[i].pwm_dev);
 	}
+	/*UnRegister PM_log*/
+#ifdef CONFIG_PM_LOG
+        pmlog_unregister_device(led->pmlog_device);
+#endif
+        /*Carl Chang,20120528*/
 
 	kfree(led);
 
@@ -993,7 +1372,11 @@ static struct platform_driver pm8xxx_led_driver = {
 
 static int __init pm8xxx_led_init(void)
 {
-	return platform_driver_register(&pm8xxx_led_driver);
+	int ret = 0;
+	printk("BootLog, +%s\n", __func__);
+	ret = platform_driver_register(&pm8xxx_led_driver);
+	printk("BootLog, -%s, ret=%d\n", __func__,ret);
+        return ret;
 }
 subsys_initcall(pm8xxx_led_init);
 

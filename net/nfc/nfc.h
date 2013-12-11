@@ -84,7 +84,10 @@ static inline int nfc_llcp_set_remote_gb(struct nfc_dev *dev,
 	return 0;
 }
 
-static inline u8 *nfc_llcp_general_bytes(struct nfc_dev *dev, u8 *gb_len)
+/* Jen Chang modify to fix build error of invaild proto type */
+//static inline u8 *nfc_llcp_general_bytes(struct nfc_dev *dev, u8 *gb_len)
+static inline u8 *nfc_llcp_general_bytes(struct nfc_dev *dev, size_t *gb_len)
+/* Jen Chang, 20121217 */
 {
 	*gb_len = 0;
 	return NULL;

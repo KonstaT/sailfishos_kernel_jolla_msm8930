@@ -35,6 +35,8 @@
 #include <asm/tls.h>
 #include <asm/system_misc.h>
 
+//Terry 20110817, add to notify kernel oops
+#include <mach/kevent.h>
 #include "signal.h"
 
 static const char *handler[]= { "prefetch abort", "data abort", "address exception", "interrupt" };
@@ -53,6 +55,10 @@ __setup("user_debug=", user_debug_setup);
 #endif
 
 static void dump_mem(const char *, const char *, unsigned long, unsigned long);
+//Terry add for power off reason +
+static size_t dump_mem_to_buf(const char *, const char *, unsigned long, 
+				unsigned long, char *, size_t);
+//Terry add for power off reason -
 
 void dump_backtrace_entry(unsigned long where, unsigned long from, unsigned long frame)
 {
@@ -65,7 +71,24 @@ void dump_backtrace_entry(unsigned long where, unsigned long from, unsigned long
 	if (in_exception_text(where))
 		dump_mem("", "Exception stack", frame + 4, frame + 4 + sizeof(struct pt_regs));
 }
+//Terry add for power off reason +
+size_t dump_backtrace_entry_to_buf(unsigned long where, unsigned long from, unsigned long frame,
+								char *buffer, size_t length)
+{
+	size_t len = 0;
+#ifdef CONFIG_KALLSYMS
+	len = snprintf(buffer, length, "[<%08lx>] (%pS) from [<%08lx>] (%pS)\n", where, (void *)where, from, (void *)from);
+#else
+	len = snprintf(buffer, length, "Function entered at [<%08lx>] from [<%08lx>]\n", where, from);
+#endif
 
+	if (in_exception_text(where))
+		len += dump_mem_to_buf("", "Exception stack", frame + 4, 
+			frame + 4 + sizeof(struct pt_regs), buffer+len, length-len);
+
+	return len;
+}
+//Terry add for power off reason -
 #ifndef CONFIG_ARM_UNWIND
 /*
  * Stack pointers should always be within the kernels view of
@@ -123,6 +146,49 @@ static void dump_mem(const char *lvl, const char *str, unsigned long bottom,
 
 	set_fs(fs);
 }
+//Terry add for power off reason +
+static size_t dump_mem_to_buf(const char *lvl, const char *str, unsigned long bottom,
+		     unsigned long top, char *buffer, size_t length)
+{
+	unsigned long first;
+	mm_segment_t fs;
+	int i;
+	size_t len = 0;
+
+	/*
+	 * We need to switch to kernel mode so that we can use __get_user
+	 * to safely read from kernel space.  Note that we now dump the
+	 * code first, just in case the backtrace kills us.
+	 */
+	fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	len = snprintf(buffer, length, "%s%s(0x%08lx to 0x%08lx)\n", lvl, str, bottom, top);
+
+	for (first = bottom & ~31; first < top; first += 32) {
+		unsigned long p;
+		char str[sizeof(" 12345678") * 8 + 1];
+
+		memset(str, ' ', sizeof(str));
+		str[sizeof(str) - 1] = '\0';
+
+		for (p = first, i = 0; i < 8 && p < top; i++, p += 4) {
+			if (p >= bottom && p < top) {
+				unsigned long val;
+				if (__get_user(val, (unsigned long *)p) == 0)
+					sprintf(str + i * 9, " %08lx", val);
+				else
+					sprintf(str + i * 9, " ????????");
+			}
+		}
+		len += snprintf(buffer+len, length-len, "%s%04lx:%s\n", lvl, first & 0xffff, str);
+	}
+
+	set_fs(fs);
+
+	return len;
+}
+//Terry add for power off reason -
 
 static void dump_instr(const char *lvl, struct pt_regs *regs)
 {
@@ -167,6 +233,15 @@ static inline void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 {
 	unwind_backtrace(regs, tsk);
 }
+
+//Terry add for power off reason +
+static inline size_t dump_backtrace_to_buf(struct pt_regs *regs,
+	struct task_struct *tsk, char *buffer, size_t length )
+{
+	return unwind_backtrace_to_buf(regs, tsk, buffer, length);
+}
+//Terry add for power off reason -
+
 #else
 static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 {
@@ -202,6 +277,15 @@ static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 	if (ok)
 		c_backtrace(fp, mode);
 }
+//Terry add for power off reason +
+static inline size_t dump_backtrace_to_buf(struct pt_regs *regs,
+	struct task_struct *tsk, char *buffer, size_t length )
+{
+	// Not supported.
+	return 0;
+}
+//Terry add for power off reason -
+
 #endif
 
 void dump_stack(void)
@@ -210,6 +294,15 @@ void dump_stack(void)
 }
 
 EXPORT_SYMBOL(dump_stack);
+
+//Terry add for power off reason +
+size_t dump_stack_to_buf(char *buffer, size_t length)
+{
+	return dump_backtrace_to_buf(NULL, NULL, buffer, length);
+}
+
+EXPORT_SYMBOL(dump_stack_to_buf);
+//Terry add for power off reason -
 
 void show_stack(struct task_struct *tsk, unsigned long *sp)
 {
@@ -296,6 +389,9 @@ void die(const char *str, struct pt_regs *regs, int err)
 		panic("Fatal exception in interrupt");
 	if (panic_on_oops)
 		panic("Fatal exception");
+	//Terry 20110817 add to notify kernel oops
+	kevent_trigger(KEVENT_OOPS);
+
 	if (ret != NOTIFY_STOP)
 		do_exit(SIGSEGV);
 }

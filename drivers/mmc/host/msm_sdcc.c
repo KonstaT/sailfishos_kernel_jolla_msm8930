@@ -60,6 +60,10 @@
 
 #include "msm_sdcc.h"
 #include "msm_sdcc_dml.h"
+/*Emily, 20120527, add PM LOG for eMMC and external SD */
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif //CONFIG_PM_LOG
 
 #define DRIVER_NAME "msm-sdcc"
 
@@ -4932,6 +4936,19 @@ store_polling(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
+/* Emily Jiang, 20121206, Add for FTM SD card detect function */
+static ssize_t
+show_detect(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct mmc_host *mmc = dev_get_drvdata(dev);
+	struct msmsdcc_host *host = mmc_priv(mmc);
+	int status;
+
+	status = msmsdcc_slot_status(host);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", status);
+}
+/* Emily Jiang, 20121206, Add for FTM SD card detect function */
 static ssize_t
 show_sdcc_to_mem_max_bus_bw(struct device *dev, struct device_attribute *attr,
 			char *buf)
@@ -5810,6 +5827,10 @@ msmsdcc_probe(struct platform_device *pdev)
 	host->dma_crci_res = dma_crci_res;
 	spin_lock_init(&host->lock);
 	mutex_init(&host->clk_mutex);
+/*Emily, 20120527, add PM LOG for eMMC and external SD */
+#ifdef CONFIG_PM_LOG
+	host->pmlog_device		= pmlog_register_device(&pdev->dev);//Terry Cheng, 20120531, Only need one pmlog_device
+#endif	//CONFIG_PM_LOG
 
 #ifdef CONFIG_MMC_EMBEDDED_SDIO
 	if (plat->embedded_sdio)
@@ -6190,6 +6211,18 @@ msmsdcc_probe(struct platform_device *pdev)
 		if (ret)
 			goto remove_max_bus_bw_file;
 	}
+	/* Emily Jiang, 20121206, Add for FTM SD card detect function */
+	else {
+		host->detect.show = show_detect;
+		host->detect.store = NULL;
+		sysfs_attr_init(&host->detect.attr);
+		host->detect.attr.name = "detect";
+		host->detect.attr.mode =  S_IRUGO;
+		ret = device_create_file(&pdev->dev, &host->detect);
+		if (ret)
+			goto remove_detect_file;
+	}
+	/* Emily Jiang, 20121206, Add for FTM SD card detect function */
 	host->idle_timeout.show = show_idle_timeout;
 	host->idle_timeout.store = store_idle_timeout;
 	sysfs_attr_init(&host->idle_timeout.attr);
@@ -6237,6 +6270,10 @@ msmsdcc_probe(struct platform_device *pdev)
  remove_polling_file:
 	if (!plat->status_irq)
 		device_remove_file(&pdev->dev, &host->polling);
+/* Emily Jiang, 20121206, Add for FTM SD card detect function */
+ remove_detect_file:
+        device_remove_file(&pdev->dev, &host->detect);
+/* Emily Jiang, 20121206, Add for FTM SD card detect function */
  remove_max_bus_bw_file:
 	device_remove_file(&pdev->dev, &host->max_bus_bw);
  platform_irq_free:
@@ -6321,6 +6358,10 @@ static int msmsdcc_remove(struct platform_device *pdev)
 	device_remove_file(&pdev->dev, &host->max_bus_bw);
 	if (!plat->status_irq)
 		device_remove_file(&pdev->dev, &host->polling);
+	/* Emily Jiang, 20121206, Add for FTM SD card detect function */
+	else
+		device_remove_file(&pdev->dev, &host->detect);
+	/* Emily Jiang, 20121206, Add for FTM SD card detect function */
 	device_remove_file(&pdev->dev, &host->idle_timeout);
 
 	del_timer_sync(&host->req_tout_timer);
@@ -6377,6 +6418,11 @@ static int msmsdcc_remove(struct platform_device *pdev)
 #endif
 	pm_runtime_disable(&(pdev)->dev);
 	pm_runtime_set_suspended(&(pdev)->dev);
+	/*Emily, 20120528, add PM LOG for eMMC and external SD */
+#ifdef CONFIG_PM_LOG
+	//UnRegister PM log
+	pmlog_unregister_device(host->pmlog_device);//Terry Cheng, 20120531, Only need one pmlog_device
+#endif	//CONFIG_PM_LOG
 
 	return 0;
 }
@@ -6513,6 +6559,14 @@ msmsdcc_runtime_suspend(struct device *dev)
 	}
 
 	pr_debug("%s: %s: start\n", mmc_hostname(mmc), __func__);
+	/*Emily, 20120527, add PM LOG for eMMC and external SD */
+	#ifdef CONFIG_PM_LOG
+	//Terry Cheng, 20120531, Only need one pmlog_device
+	rc = pmlog_device_off(host->pmlog_device);
+		if (rc)
+			printk("[PM_LOG]eMMC off ,fail rc = %d\n", rc);
+
+	#endif //CONFIG_PM_LOG
 	if (mmc) {
 		host->sdcc_suspending = 1;
 		mmc->suspend_task = current;
@@ -6571,11 +6625,20 @@ msmsdcc_runtime_resume(struct device *dev)
 	struct mmc_host *mmc = dev_get_drvdata(dev);
 	struct msmsdcc_host *host = mmc_priv(mmc);
 	unsigned long flags;
+	int rc = 0;
 
 	if (host->plat->is_sdio_al_client)
 		return 0;
 
 	pr_debug("%s: %s: start\n", mmc_hostname(mmc), __func__);
+	/*Emily, 20120527, add PM LOG for eMMC and external SD */
+	#ifdef CONFIG_PM_LOG
+	//Terry Cheng, 20120531, Only need one pmlog_device
+	rc = pmlog_device_on(host->pmlog_device);
+		if (rc)
+			printk("[PM_LOG]eMMC on ,fail rc = %d\n", rc);
+	#endif //CONFIG_PM_LOG
+
 	if (mmc) {
 		if (mmc->card && mmc_card_sdio(mmc->card) &&
 				mmc_card_keep_power(mmc)) {
@@ -6752,12 +6815,18 @@ static int __init msmsdcc_init(void)
 {
 #if defined(CONFIG_DEBUG_FS)
 	int ret = 0;
+	/* Add BootLog */
+	printk("BootLog, +%s\n", __func__);
+	/* Emily Jiang, 20120622 */
 	ret = msmsdcc_dbg_init();
 	if (ret) {
 		pr_err("Failed to create debug fs dir \n");
 		return ret;
 	}
 #endif
+	/* Add BootLog */
+	printk("BootLog, -%s, ret=%d\n", __func__,ret);
+	/* Emily Jiang, 20120622 */
 	return platform_driver_register(&msmsdcc_driver);
 }
 

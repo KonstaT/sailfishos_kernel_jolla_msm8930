@@ -140,6 +140,10 @@ struct usb_ep_ops {
 	void (*fifo_flush) (struct usb_ep *ep);
 };
 
+enum usb_cable_type {
+        USB_GENERAL_CABLE = 0,                 
+        USB_FACTORY_CABLE,
+};
 /**
  * struct usb_ep - device side representation of USB endpoint
  * @name:identifier for the endpoint, such as "ep-a" or "ep9in-bulk"
@@ -534,6 +538,7 @@ struct usb_gadget {
 	struct list_head		ep_list;	/* of usb_ep */
 	enum usb_device_speed		speed;
 	enum usb_device_speed		max_speed;
+	enum usb_cable_type		cable_type;
 	unsigned			sg_supported:1;
 	unsigned			is_otg:1;
 	unsigned			is_a_peripheral:1;
@@ -542,6 +547,8 @@ struct usb_gadget {
 	unsigned			a_alt_hnp_support:1;
 	unsigned			host_request:1;
 	unsigned			otg_srp_reqd:1;
+	unsigned			enumeration;
+	unsigned			otg_vbus_state;
 	const char			*name;
 	struct device			dev;
 	u8				usb_core_id;
@@ -989,5 +996,6 @@ extern struct usb_ep *usb_ep_autoconfig_ss(struct usb_gadget *,
 			struct usb_ss_ep_comp_descriptor *);
 
 extern void usb_ep_autoconfig_reset(struct usb_gadget *);
-
+extern int query_enable_state(struct usb_gadget *gadget);
+extern void android_set_usb_serialno (struct usb_gadget *gadget);
 #endif /* __LINUX_USB_GADGET_H */

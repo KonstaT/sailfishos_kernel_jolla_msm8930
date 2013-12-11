@@ -1164,6 +1164,7 @@ static void msm_hsl_console_write(struct console *co, const char *s,
 	msm_hsl_port = UART_TO_MSM(port);
 	vid = msm_hsl_port->ver_id;
 
+	//pr_info("%s\n", __FUNCTION__);
 	/* not pretty, but we can end up here via various convoluted paths */
 	if (port->sysrq || oops_in_progress)
 		locked = spin_trylock(&port->lock);
@@ -1193,7 +1194,7 @@ static int msm_hsl_console_setup(struct console *co, char *options)
 
 	if (unlikely(!port->membase))
 		return -ENXIO;
-
+	pr_info("%s\n", __FUNCTION__);
 	port->cons = co;
 
 	pm_runtime_get_noresume(port->dev);
@@ -1548,6 +1549,13 @@ static int __init msm_serial_hsl_init(void)
 {
 	int ret;
 
+	/* 20130225Terry Cheng, Check whether need to setup console {*/
+	if(!console_set_on_cmdline)
+	{
+		pr_err("Console does not enable\n");
+		msm_hsl_uart_driver.cons = NULL;
+	}
+	/* } 20130225Terry Cheng, Check whether need to setup console */
 	ret = uart_register_driver(&msm_hsl_uart_driver);
 	if (unlikely(ret))
 		return ret;

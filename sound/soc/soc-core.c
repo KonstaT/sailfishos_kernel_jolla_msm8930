@@ -50,6 +50,9 @@
 static DECLARE_WAIT_QUEUE_HEAD(soc_pm_waitq);
 
 #ifdef CONFIG_DEBUG_FS
+/* Jen Chang merge from detroit_2.0 for adding debugfs */
+static unsigned int codec_reg_value = 0xff;
+/* Jen Chang, 20120924 */
 struct dentry *snd_soc_debugfs_root;
 EXPORT_SYMBOL_GPL(snd_soc_debugfs_root);
 #endif
@@ -259,6 +262,20 @@ static ssize_t codec_reg_write_file(struct file *file,
 		return -EFAULT;
 	buf[buf_size] = 0;
 
+/* Jen Chang merge from detroit_2.0 for adding debugfs */
+	switch(buf[0]){
+		case 'r':
+			printk("read code reg\n");
+			start++;
+			while (*start == ' ')
+				start++;
+			reg = simple_strtoul(start, &start, 16);
+			codec_reg_value = snd_soc_read(codec, reg);
+		break;
+
+		case 'w':
+			printk("write code reg\n");
+			start++;
 	while (*start == ' ')
 		start++;
 	reg = simple_strtoul(start, &start, 16);
@@ -271,6 +288,9 @@ static ssize_t codec_reg_write_file(struct file *file,
 	add_taint(TAINT_USER);
 
 	snd_soc_write(codec, reg, value);
+		break;
+	}
+/* Jen Chang, 20120924 */
 	return buf_size;
 }
 
@@ -301,6 +321,12 @@ static void soc_init_codec_debugfs(struct snd_soc_codec *codec)
 	codec->debugfs_reg = debugfs_create_file("codec_reg", 0644,
 						 codec->debugfs_codec_root,
 						 codec, &codec_reg_fops);
+
+/* Jen Chang merge from detroit_2.0 for adding debugfs */
+	codec->debugfs_reg_value = debugfs_create_u16("reg_value", S_IRUGO,
+				codec->debugfs_codec_root, (u16 *)&codec_reg_value);
+/* Jen Chang, 20120924 */
+
 	if (!codec->debugfs_reg)
 		printk(KERN_WARNING
 		       "ASoC: Failed to create codec register debugfs file\n");

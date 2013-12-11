@@ -249,3 +249,8 @@ extern void *sitar_mbhc_cal_btn_det_mp(const struct sitar_mbhc_btn_detect_cfg
 	    sizeof(struct sitar_mbhc_imped_detect_cfg) + \
 	    (cfg_ptr->_n_rload * (sizeof(cfg_ptr->_rload[0]) + \
 				 sizeof(cfg_ptr->_alpha[0]))))
+
+#define sndprintk(level,fmt,args...) do {if (level <= SND_DLL) printk("[snd]" fmt, ##args);}while(0) 
+#define SND_DLL_DEBUG (1)
+#define SND_DLL_INFO (0)
+extern unsigned int SND_DLL;

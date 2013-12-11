@@ -21,7 +21,13 @@
 #include <mach/pmic.h>
 #include <mach/camera.h>
 #include <mach/gpio.h>
+#include <linux/i2c.h>
+#include <mach/camera.h>
+#include <media/msm_camera.h>
 #include "msm_camera_i2c.h"
+//Sophia Wang+
+#include "flash_adp1650.h"
+//Sophia Wang-
 
 struct i2c_client *sx150x_client;
 struct timer_list timer_flash;
@@ -283,6 +289,13 @@ int msm_camera_flash_external(
 {
 	int rc = 0;
 
+	//Sophia Wang+
+	#ifdef CONFIG_MSM_CAMERA_FLASH_ADP1650
+		rc = adp1650_flash_control(external, led_state);
+	       
+		return rc;
+	#endif
+	//Sophia Wang-
 	switch (led_state) {
 
 	case MSM_CAMERA_LED_INIT:

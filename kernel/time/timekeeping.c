@@ -369,6 +369,11 @@ int do_settimeofday(const struct timespec *tv)
 {
 	struct timespec ts_delta;
 	unsigned long flags;
+	/* Bright Lee, 20120430, re-calibrate time_delta for printk to main log { */
+	#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+	void calculate_time_delta_for_printk(void);
+	#endif
+	/* } Bright Lee, 20120430 */
 
 	if ((unsigned long)tv->tv_nsec >= NSEC_PER_SEC)
 		return -EINVAL;
@@ -389,6 +394,12 @@ int do_settimeofday(const struct timespec *tv)
 
 	/* signal hrtimers about time change */
 	clock_was_set();
+
+	/* Bright Lee, 20120430, re-calibrate time_delta for printk to main log { */
+	#ifdef CONFIG_EMIT_KMSG_TO_MAINLOG
+	calculate_time_delta_for_printk();
+	#endif
+	/* } Bright Lee, 20120430 */
 
 	return 0;
 }

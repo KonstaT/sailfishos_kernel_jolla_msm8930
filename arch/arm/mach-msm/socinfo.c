@@ -22,6 +22,14 @@
 
 #include "smd_private.h"
 
+/* Terry Cheng, 20120120, Add hw and board id for T-line {*/
+#include <mach/hwid.h>
+/* }Terry Cheng, 20120120, Add hw and board id for T-line { */
+/* Terry Cheng, 20120215,  Add for Qisda Project id got share memory {*/
+int msm_project_id;
+EXPORT_SYMBOL(msm_project_id);
+/* }Terry Cheng, 20120215,  Add for Qisda Project id got share memory */
+
 #define BUILD_ID_LENGTH 32
 
 enum {
@@ -302,6 +310,10 @@ static struct socinfo_v1 dummy_socinfo = {
 	.version = 1,
 };
 
+smem_vendor_id1_apps_data *vendor1_data;
+/* Terry Cheng, 20120120, Add hw and board id for T-line {*/
+smem_vendor_id2_bl_data *vendor2_data;
+/* }Terry Cheng, 20120120, Add hw and board id for T-line */
 uint32_t socinfo_get_id(void)
 {
 	return (socinfo) ? socinfo->v1.id : 0;
@@ -384,6 +396,163 @@ enum msm_cpu socinfo_get_msm_cpu(void)
 }
 EXPORT_SYMBOL_GPL(socinfo_get_msm_cpu);
 
+/* Terry Cheng, 20120120, Add hw and board id for T-line {*/
+static ssize_t
+socinfo_show_cur_cpu(struct sys_device *dev,
+		     struct sysdev_attribute *attr,
+		     char *buf)
+{
+	if (!socinfo) {
+		pr_err("%s: No socinfo found!\n", __func__);
+		return 0;
+	}
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			cur_cpu);
+}
+static ssize_t
+socinfo_show_band_type(struct sys_device *dev,
+		     struct sysdev_attribute *attr,
+		     char *buf)
+{
+	if (!vendor2_data) {
+		pr_err("%s: No vendor2_data found!\n", __func__);
+		return 0;
+	}
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			vendor2_data->hw_info.band_type);
+}
+
+static ssize_t
+socinfo_show_rf_id(struct sys_device *dev,
+                   struct sysdev_attribute *attr,
+                   char *buf)
+{
+    smem_vendor_id0_amss_data *vendor0_data_rf_id;
+    vendor0_data_rf_id = smem_alloc(SMEM_ID_VENDOR0, sizeof (smem_vendor_id0_amss_data));
+
+    if (!vendor0_data_rf_id)  {
+        pr_err("%s: No vendor0_data found!\n", __func__);
+        return 0;
+    }
+    return snprintf(buf, PAGE_SIZE, "%1x%1x\n",
+                    vendor0_data_rf_id->rf_id_info.rf_id_flag,vendor0_data_rf_id->rf_id_info.rf_id_ver);
+}
+
+static ssize_t
+socinfo_show_proj_id(struct sys_device *dev,
+                   struct sysdev_attribute *attr,
+                   char *buf)
+{
+	if (!vendor2_data) {
+		pr_err("%s: No vendor2_data found!\n", __func__);
+		return 0;
+	}	
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			vendor2_data->hw_info.project_id);
+}
+
+static ssize_t
+socinfo_show_krait_ver(struct sys_device *dev,
+                   struct sysdev_attribute *attr,
+                   char *buf)
+{
+        return snprintf(buf, PAGE_SIZE, "0x%X\n", read_cpuid_id());
+}
+
+#ifdef CONFIG_CUSTOMER_ACER
+static ssize_t
+socinfo_show_ram_sizeGB(struct sys_device *dev,
+                   struct sysdev_attribute *attr,
+                   char *buf)
+{
+        if (!vendor2_data) {
+                pr_err("%s: No vendor2_data found!\n", __func__);
+                return 0;
+        }
+        return snprintf(buf, PAGE_SIZE, "%d\n",
+                        vendor2_data->hw_info.lpddr2_size_in_MB/1024);
+}
+
+static ssize_t
+socinfo_show_rom_sizeGB(struct sys_device *dev,
+                   struct sysdev_attribute *attr,
+                   char *buf)
+{
+        if (!vendor2_data) {
+                pr_err("%s: No vendor2_data found!\n", __func__);
+                return 0;
+        }
+        return snprintf(buf, PAGE_SIZE, "%d\n",
+                        (vendor2_data->hw_info.emmc_info.card_size_in_sectors+2097152)/2097152);
+}
+#endif
+
+static ssize_t
+socinfo_show_imei(struct sys_device *dev,
+                   struct sysdev_attribute *attr,
+                   char *buf)
+{
+	unsigned char imei_str[OTP_IMEI_LENGTH+1]={'\0'};
+	if (!vendor1_data) {
+		pr_err("%s: No vendor2_data found!\n", __func__);
+		return 0;
+	}
+	strncpy(imei_str,vendor1_data->imei,OTP_IMEI_LENGTH);
+	return snprintf(buf, PAGE_SIZE, "%s\n",imei_str);
+}
+
+static ssize_t
+socinfo_show_board_id(struct sys_device *dev,
+		     struct sysdev_attribute *attr,
+		     char *buf)
+{
+	if (!vendor2_data) {
+		pr_err("%s: No vendor2_data found!\n", __func__);
+		return 0;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+		vendor2_data->hw_info.board_id);
+}
+static ssize_t
+socinfo_show_hw_id_adc_value(struct sys_device *dev,
+		     struct sysdev_attribute *attr,
+		     char *buf)
+{
+	if (!vendor2_data) {
+		pr_err("%s: No vendor2_data found!\n", __func__);
+		return 0;
+	}
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+		vendor2_data->hw_info.hw_id_adc_value);
+}
+static ssize_t
+socinfo_show_ddr_size(struct sys_device *dev,
+		     struct sysdev_attribute *attr,
+		     char *buf)
+{
+	if (!vendor2_data) {
+		pr_err("%s: No vendor2_data found!\n", __func__);
+		return 0;
+	}
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+		vendor2_data->hw_info.lpddr2_size_in_MB);
+}
+
+
+static ssize_t
+socinfo_show_ddr_vendor(struct sys_device *dev,
+		     struct sysdev_attribute *attr,
+		     char *buf)
+{
+	if (!vendor2_data) {
+		pr_err("%s: No vendor2_data found!\n", __func__);
+		return 0;
+	}
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+		vendor2_data->hw_info.ddr_vendor);
+}
+/* } Terry Cheng, 20120120, Add hw and board id for T-line */
 static ssize_t
 socinfo_show_id(struct sys_device *dev,
 		struct sysdev_attribute *attr,
@@ -623,6 +792,25 @@ static struct sysdev_attribute socinfo_v7_files[] = {
 			socinfo_show_pmic_die_revision, NULL),
 };
 
+/* Terry Cheng, 20120120, Add hw and board id for T-line {*/
+static struct sysdev_attribute socinfo_qisda_files[] = {
+	_SYSDEV_ATTR(cur_cpu, 0444, socinfo_show_cur_cpu, NULL),
+	_SYSDEV_ATTR(band_type, 0444, socinfo_show_band_type, NULL),
+	_SYSDEV_ATTR(board_id, 0444, socinfo_show_board_id, NULL),
+	_SYSDEV_ATTR(hw_id_adc_value, 0444, socinfo_show_hw_id_adc_value, NULL),
+	_SYSDEV_ATTR(ddr_size, 0444, socinfo_show_ddr_size, NULL),
+	_SYSDEV_ATTR(rf_id,0444, socinfo_show_rf_id, NULL),                //Sean.Su
+	_SYSDEV_ATTR(proj_id,0444, socinfo_show_proj_id, NULL),            //Sean.Su
+	_SYSDEV_ATTR(krait_ver,0444, socinfo_show_krait_ver, NULL),        //Sean.Su
+#ifdef CONFIG_CUSTOMER_ACER
+	_SYSDEV_ATTR(ram_sizeGB,0444, socinfo_show_ram_sizeGB, NULL),      //Sean.Su
+	_SYSDEV_ATTR(rom_sizeGB,0444, socinfo_show_rom_sizeGB, NULL),      //Sean.Su
+#endif
+	_SYSDEV_ATTR(ddr_vendor, 0444, socinfo_show_ddr_vendor, NULL),     // RK Chen, 2012/12/6
+	_SYSDEV_ATTR(imei, 0444, socinfo_show_imei, NULL),                 //Sean.Su
+};
+/* }Terry Cheng, 20120120, Add hw and board id for T-line */
+
 static struct sysdev_class soc_sysdev_class = {
 	.name = "soc",
 };
@@ -697,6 +885,11 @@ static int __init socinfo_init_sysdev(void)
 	if (socinfo->v1.format < 6)
 		return err;
 
+	/* Terry Cheng, 20120120, Add hw and board id for T-line {*/
+	socinfo_create_files(&soc_sys_device, socinfo_qisda_files,
+				ARRAY_SIZE(socinfo_qisda_files));
+	/* }Terry Cheng, 20120120, Add hw and board id for T-line */
+
 	socinfo_create_files(&soc_sys_device, socinfo_v6_files,
 				ARRAY_SIZE(socinfo_v6_files));
 
@@ -741,6 +934,17 @@ static void * __init setup_dummy_socinfo(void)
 
 int __init socinfo_init(void)
 {
+	vendor1_data = smem_alloc(SMEM_ID_VENDOR1, sizeof (smem_vendor_id1_apps_data));
+	if (!vendor1_data)
+		pr_err("Alloc share memory SMEM_ID_VENDOR1 fail\n");
+
+	/* Terry Cheng, 20120120, Add hw and board id for T-line {*/
+	vendor2_data = smem_alloc(SMEM_ID_VENDOR2, sizeof (smem_vendor_id2_bl_data));
+
+	if (!vendor2_data)
+		pr_err("Alloc share memory SMEM_ID_VENDOR2 fail\n");
+	/* } Terry Cheng, 20120120, Add hw and board id for T-line */
+	
 	socinfo = smem_alloc(SMEM_HW_SW_BUILD_ID, sizeof(struct socinfo_v7));
 
 	if (!socinfo)
@@ -954,3 +1158,12 @@ const int cpu_is_krait_v3(void)
 		return 0;
 	};
 }
+/* Terry Cheng, 20120215,  Add for Qisda Project id got share memory {*/
+static int __init project_id_setup(char *str)
+{
+	msm_project_id = simple_strtol(str, NULL, 10);
+	printk("msm_project_id = %d\n", msm_project_id);
+	return 1;
+}
+__setup("project_id=", project_id_setup);
+/* }Terry Cheng, 20120215,  Add for Qisda Project id got share memory */

@@ -657,6 +657,9 @@ struct snd_soc_codec {
 	struct dentry *debugfs_codec_root;
 	struct dentry *debugfs_reg;
 	struct dentry *debugfs_dapm;
+/* Jen Chang merge from detroit_2.0 for adding debugfs */
+	struct dentry *debugfs_reg_value;
+/* Jen Chang, 20120924 */
 #endif
 };
 

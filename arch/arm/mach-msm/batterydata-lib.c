@@ -336,3 +336,104 @@ int interpolate_pc(struct pc_temp_ocv_lut *pc_temp_ocv,
 							ocv, batt_temp_degc);
 	return 100;
 }
+
+//Eric Liu+
+int interpolate_soc(struct pc_temp_ocv_lut *soc_temp_ocv_lut,
+				int batt_temp_degc, int ocv)
+{
+	int i, j, pcj, pcj_minus_one, pc;
+	int rows = soc_temp_ocv_lut->rows;
+	int cols = soc_temp_ocv_lut->cols;
+
+	if (batt_temp_degc < soc_temp_ocv_lut->temp[0]) {
+		pr_debug("batt_temp %d < known temp range\n", batt_temp_degc);
+		batt_temp_degc = soc_temp_ocv_lut->temp[0];
+	}
+	if (batt_temp_degc > soc_temp_ocv_lut->temp[cols - 1]) {
+		pr_debug("batt_temp %d > known temp range\n", batt_temp_degc);
+		batt_temp_degc = soc_temp_ocv_lut->temp[cols - 1];
+	}
+
+	for (j = 0; j < cols; j++)
+		if (batt_temp_degc <= soc_temp_ocv_lut->temp[j])
+			break;
+	if (batt_temp_degc == soc_temp_ocv_lut->temp[j]) {
+		/* found an exact match for temp in the table */
+		if (ocv >= soc_temp_ocv_lut->ocv[0][j])
+			return soc_temp_ocv_lut->percent[0];
+		if (ocv <= soc_temp_ocv_lut->ocv[rows - 1][j])
+			return soc_temp_ocv_lut->percent[rows - 1];
+		for (i = 0; i < rows; i++) {
+			if (ocv >= soc_temp_ocv_lut->ocv[i][j]) {
+				if (ocv == soc_temp_ocv_lut->ocv[i][j])
+					return
+					soc_temp_ocv_lut->percent[i];
+				pc = linear_interpolate(
+					soc_temp_ocv_lut->percent[i],
+					soc_temp_ocv_lut->ocv[i][j],
+					soc_temp_ocv_lut->percent[i - 1],
+					soc_temp_ocv_lut->ocv[i - 1][j],
+					ocv);
+				return pc;
+			}
+		}
+	}
+
+	/*
+	 * batt_temp_degc is within temperature for
+	 * column j-1 and j
+	 */
+	if (ocv >= soc_temp_ocv_lut->ocv[0][j])
+		return soc_temp_ocv_lut->percent[0];
+	if (ocv <= soc_temp_ocv_lut->ocv[rows - 1][j - 1])
+		return soc_temp_ocv_lut->percent[rows - 1];
+
+	pcj_minus_one = 0;
+	pcj = 0;
+	for (i = 0; i < rows-1; i++) {
+		if (pcj == 0
+			&& is_between(soc_temp_ocv_lut->ocv[i][j],
+				soc_temp_ocv_lut->ocv[i+1][j], ocv)) {
+			pcj = linear_interpolate(
+				soc_temp_ocv_lut->percent[i],
+				soc_temp_ocv_lut->ocv[i][j],
+				soc_temp_ocv_lut->percent[i + 1],
+				soc_temp_ocv_lut->ocv[i+1][j],
+				ocv);
+		}
+
+		if (pcj_minus_one == 0
+			&& is_between(soc_temp_ocv_lut->ocv[i][j-1],
+				soc_temp_ocv_lut->ocv[i+1][j-1], ocv)) {
+
+			pcj_minus_one = linear_interpolate(
+				soc_temp_ocv_lut->percent[i],
+				soc_temp_ocv_lut->ocv[i][j-1],
+				soc_temp_ocv_lut->percent[i + 1],
+				soc_temp_ocv_lut->ocv[i+1][j-1],
+				ocv);
+		}
+
+		if (pcj && pcj_minus_one) {
+			pc = linear_interpolate(
+				pcj_minus_one,
+				soc_temp_ocv_lut->temp[j-1],
+				pcj,
+				soc_temp_ocv_lut->temp[j],
+				batt_temp_degc);
+			return pc;
+		}
+	}
+
+	if (pcj)
+		return pcj;
+
+	if (pcj_minus_one)
+		return pcj_minus_one;
+
+	pr_debug("%d ocv wasn't found for temp %d in the LUT returning 100%%",
+							ocv, batt_temp_degc);
+	return 1000;
+}
+//Eric Liu-
+

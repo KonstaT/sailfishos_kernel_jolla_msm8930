@@ -78,7 +78,8 @@ struct msm_pm_platform_data {
 extern struct msm_pm_platform_data msm_pm_sleep_modes[];
 
 struct msm_pm_sleep_ops {
-	void *(*lowest_limits)(bool from_idle,
+	struct msm_rpmrs_limits *(*lowest_limits)(bool from_idle,
+			//20120919, Terry Cheng, Show RPM resource log when suspend 
 			enum msm_pm_sleep_mode sleep_mode,
 			struct msm_pm_time_params *time_param, uint32_t *power);
 	int (*enter_sleep)(uint32_t sclk_count, void *limits,
@@ -103,9 +104,17 @@ void __init msm_pm_set_tz_retention_flag(unsigned int flag);
 #ifdef CONFIG_MSM_PM8X60
 void msm_pm_set_rpm_wakeup_irq(unsigned int irq);
 void msm_pm_set_sleep_ops(struct msm_pm_sleep_ops *ops);
+//Terry Cheng, 20121101, Parse rpm log
+#ifdef CONFIG_PM_LOG
+void pmlog_set_sleep_ops(struct msm_pm_sleep_ops *ops);
+#endif //CONFIG_PM_LOG
 #else
 static inline void msm_pm_set_rpm_wakeup_irq(unsigned int irq) {}
 static inline void msm_pm_set_sleep_ops(struct msm_pm_sleep_ops *ops) {}
+//Terry Cheng, 20121101, Parse rpm log
+#ifdef CONFIG_PM_LOG
+static inline void pmlog_set_sleep_ops(struct msm_pm_sleep_ops *ops){}
+#endif	//CONFIG_PM_LOG
 #endif
 #ifdef CONFIG_HOTPLUG_CPU
 int msm_platform_secondary_init(unsigned int cpu);

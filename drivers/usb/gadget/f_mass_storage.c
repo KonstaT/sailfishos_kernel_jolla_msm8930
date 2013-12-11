@@ -316,6 +316,10 @@ static int csw_hack_sent;
 #endif
 /*-------------------------------------------------------------------------*/
 
+extern struct dentry *kernel_debuglevel_dir;
+unsigned int FUMS_DLL =0;
+#define fums_printk(level,fmt,args...) if (level <= FUMS_DLL) printk(fmt,##args);
+
 struct fsg_dev;
 struct fsg_common;
 
@@ -503,7 +507,7 @@ static int fsg_set_halt(struct fsg_dev *fsg, struct usb_ep *ep)
 		name = "bulk-out";
 	else
 		name = ep->name;
-	DBG(fsg, "%s set halt\n", name);
+	 fums_printk(1,"fums::%s set halt %s\n",__func__,name);
 	return usb_ep_set_halt(ep);
 }
 
@@ -1057,12 +1061,10 @@ static int do_write(struct fsg_common *common)
 				return -EINTR;		/* Interrupted! */
 
 			if (nwritten < 0) {
-				LDBG(curlun, "error in file write: %d\n",
-				     (int)nwritten);
+				fums_printk(0,"fums::%s error in file wrtie:%d\n",__func__,(int)nwritten);
 				nwritten = 0;
 			} else if (nwritten < amount) {
-				LDBG(curlun, "partial file write: %d/%u\n",
-				     (int)nwritten, amount);
+				fums_printk(0,"fums::%s partial file write: %d/%u\n",__func__,(int)nwritten, amount);
 				nwritten = round_down(nwritten, curlun->blksize);
 			}
 			file_offset += nwritten;
@@ -1455,7 +1457,8 @@ static int do_mode_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 		memset(buf+2, 0, 10);	/* None of the fields are changeable */
 
 		if (!changeable_values) {
-			buf[2] = 0x04;	/* Write cache enable, */
+			buf[2] = 0x00;        /* disable write cache */
+			//buf[2] = 0x04;	/* Write cache enable, */
 					/* Read cache not disabled */
 					/* No cache retention priorities */
 			put_unaligned_be16(0xffff, &buf[4]);
@@ -1610,6 +1613,7 @@ static int halt_bulk_in_endpoint(struct fsg_dev *fsg)
 	rc = fsg_set_halt(fsg, fsg->bulk_in);
 	if (rc == -EAGAIN)
 		VDBG(fsg, "delayed bulk-in endpoint halt\n");
+	fums_printk(1,"fums:%s rc=%d\n",__func__,rc);
 	while (rc != 0) {
 		if (rc != -EAGAIN) {
 			WARNING(fsg, "usb_ep_set_halt -> %d\n", rc);
@@ -1633,6 +1637,7 @@ static int wedge_bulk_in_endpoint(struct fsg_dev *fsg)
 	rc = usb_ep_set_wedge(fsg->bulk_in);
 	if (rc == -EAGAIN)
 		VDBG(fsg, "delayed bulk-in endpoint wedge\n");
+	fums_printk(1,"fums::%s rc=%d\n",__func__,rc);
 	while (rc != 0) {
 		if (rc != -EAGAIN) {
 			WARNING(fsg, "usb_ep_set_wedge -> %d\n", rc);
@@ -2040,6 +2045,7 @@ static int do_scsi_command(struct fsg_common *common)
 	common->short_packet_received = 0;
 
 	down_read(&common->filesem);	/* We're using the backing file */
+	fums_printk(1,"fums::%s: 0x%x\n",__func__,common->cmnd[0]);
 	switch (common->cmnd[0]) {
 
 	case INQUIRY:
@@ -2281,7 +2287,10 @@ unknown_cmnd:
 	up_read(&common->filesem);
 
 	if (reply == -EINTR || signal_pending(current))
+	{
+		fums_printk(0,"fums::%s reply=%d or signal occur\n",__func__,reply);
 		return -EINTR;
+	}
 
 	/* Set up the single reply buffer for finish_reply() */
 	if (reply == -EINVAL)
@@ -2816,6 +2825,17 @@ static inline void fsg_common_put(struct fsg_common *common)
 	kref_put(&common->ref, fsg_common_release);
 }
 
+static void fums_create_kernel_debuglevel_entries(void)
+{
+        if(kernel_debuglevel_dir != NULL) {
+            debugfs_create_u32("fums_dll", S_IRUGO | S_IWUGO,
+                        kernel_debuglevel_dir, (u32 *)(&FUMS_DLL));
+
+        } else {
+                fums_printk(0, "%s::create kernel debuglevel dir falied\n",__func__);
+        }
+}
+
 static struct fsg_common *fsg_common_init(struct fsg_common *common,
 					  struct usb_composite_dev *cdev,
 					  struct fsg_config *cfg)
@@ -2827,6 +2847,7 @@ static struct fsg_common *fsg_common_init(struct fsg_common *common,
 	int nluns, i, rc;
 	char *pathbuf;
 
+	fums_create_kernel_debuglevel_entries();
 	rc = fsg_num_buffers_validate();
 	if (rc != 0)
 		return ERR_PTR(rc);
@@ -2879,6 +2900,7 @@ static struct fsg_common *fsg_common_init(struct fsg_common *common,
 	init_rwsem(&common->filesem);
 
 	for (i = 0, lcfg = cfg->luns; i < nluns; ++i, ++curlun, ++lcfg) {
+		fums_printk(0,"UMS::%s %d : cdrom =%d\n",__func__,i,curlun->cdrom);
 		curlun->cdrom = !!lcfg->cdrom;
 		curlun->ro = lcfg->cdrom || lcfg->ro;
 		curlun->initially_ro = curlun->ro;

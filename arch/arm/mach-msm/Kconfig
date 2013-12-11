@@ -493,6 +493,38 @@ config MSM_REMOTE_SPINLOCK_SFPB
 config MSM_ADM3
 	bool
 
+choice
+prompt "HW Selection"
+	depends on ARCH_MSM8930
+
+	config HW_BOSTON
+	    bool "BOSTON"
+	config HW_ROME
+	    bool "ROME"
+        config HW_SAPPORO
+            bool "SAPPORO"
+endchoice
+
+choice
+prompt "HW Version Selection"
+        depends on (HW_BOSTON || HW_ROME || HW_SAPPORO)
+
+        config MACH_EVT0
+            bool "EVT0"
+endchoice
+
+choice
+prompt "BUILD TYEP Selection"
+        depends on (HW_BOSTON || HW_ROME || HW_SAPPORO)
+
+        config BUILD_SHIP
+            bool "SHIP"
+        config BUILD_RELEASE
+            bool "RELEASE"
+        config BUILD_FACTORY
+            bool "FACTORY"
+endchoice
+
 menu "MSM Board Selection"
 
 config MACH_HALIBUT
@@ -2608,5 +2640,59 @@ config MSM_CPU_PWRCTL
 	  Droop detector mechanism can adversely affect krait plls during
 	  stand alone power collapse operation. Selecting this option
 	  ensures that they are always off.
+
+# Terry Cheng, 20120906 Add PMlog config
+config PM_LOG
+	bool "Power Management log"
+	default y
+	help
+	  Enable power management log.
+
+config POWEROFF_CHARGING
+	bool "Support poweroff charging by kernel"	
+	default n	
+	help
+	  Use the same charging algorithm at poweroff and normal charging.
+
+# Bright Lee, 20120517, save last log when panic { 
+config PANIC_LASTLOG
+	bool "Save last log when kernel panic"
+	default n
+	help 
+	  When kernel panic, aboot will save log buffer to reserved memory, 
+	  and create /proc/lastlog/ for access
+# } Bright Lee, 20120517
+
+# Bright Lee, 20111202, hot key to trigger reboot log {
+config PANIC_LASTLOG_HOTKEY
+	bool "Press hotkey to trigger lastlog"
+	default n
+	depends on PANIC_LASTLOG
+	help 
+	  When system hang, but not panic, press hotkey combincation 
+	  to trigger panic for logging
+# } Bright Lee, 20111202
+
+# Bright Lee, 20111215, redirect kmsg to android main log {
+config EMIT_KMSG_TO_MAINLOG
+	bool "Emit printk kmsg to android main log"
+	default n
+	help 
+	  also log kmsg in android main log for easily debug
+# } Bright Lee, 20111215
+
+# okpa, 20111227, save aboot log {
+config ABOOT_LOG
+	bool "Appsboot log"
+	default n
+	help 
+	  Get the log of appsboot in /proc/aboot_log.
+# } okpa, 20111227
+
+config HW_NO_HDMIOUT
+	bool "HDMI feature"
+	default n
+	help
+	  Build time for disable HDMI out feature
 
 endif

@@ -23,6 +23,10 @@
 #include "u_ether.h"
 
 
+extern struct dentry *kernel_debuglevel_dir;
+static unsigned int Ether_DLL =0;
+#define ether_printk(level,fmt,args...) if (level <= Ether_DLL) printk(fmt,##args);
+
 /*
  * This component encapsulates the Ethernet link glue needed to provide
  * one (!) network link through the USB gadget stack, normally "usb0".
@@ -123,7 +127,7 @@ static inline int qlen(struct usb_gadget *gadget)
 #undef INFO
 
 #define xprintk(d, level, fmt, args...) \
-	printk(level "%s: " fmt , (d)->net->name , ## args)
+	printk(level "%s: " fmt , "USB" , ## args)
 
 #ifdef DEBUG
 #undef DEBUG
@@ -157,6 +161,7 @@ static int ueth_change_mtu(struct net_device *net, int new_mtu)
 	int		status = 0;
 
 	/* don't change MTU on "live" link (peer won't know) */
+	ether_printk(1,"uether::%s\n",__func__);
 	spin_lock_irqsave(&dev->lock, flags);
 	if (dev->port_usb)
 		status = -EBUSY;
@@ -260,6 +265,7 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 	req->context = skb;
 
 	retval = usb_ep_queue(out, req, gfp_flags);
+	ether_printk(1,"uetehr::%s usb trasnfer data retval=%d\n",__func__,retval);
 	if (retval == -ENOMEM)
 enomem:
 		defer_kevent(dev, WORK_RX_MEMORY);
@@ -312,12 +318,12 @@ static void rx_complete(struct usb_ep *ep, struct usb_request *req)
 	/* software-driven interface shutdown */
 	case -ECONNRESET:		/* unlink */
 	case -ESHUTDOWN:		/* disconnect etc */
-		VDBG(dev, "rx shutdown, code %d\n", status);
+		ether_printk(0,"uether:: %s rx shutdown, code %d\n",__func__,status);
 		goto quiesce;
 
 	/* for hardware automagic (such as pxa) */
 	case -ECONNABORTED:		/* endpoint reset */
-		DBG(dev, "rx %s reset\n", ep->name);
+		ether_printk(0,"uetehr::%s rx(endpoint) %s reset\n",__func__,ep->name);
 		defer_kevent(dev, WORK_RX_MEMORY);
 quiesce:
 		dev_kfree_skb_any(skb);
@@ -397,7 +403,7 @@ static int alloc_requests(struct eth_dev *dev, struct gether *link, unsigned n)
 		goto fail;
 	goto done;
 fail:
-	DBG(dev, "can't alloc requests\n");
+	ether_printk(0,"uether::%s can't alloc request\n",__func__);
 done:
 	spin_unlock(&dev->req_lock);
 	return status;
@@ -786,7 +792,7 @@ success:
 
 static void eth_start(struct eth_dev *dev, gfp_t gfp_flags)
 {
-	DBG(dev, "%s\n", __func__);
+	ether_printk(0,"uether:: %s\n",__func__);
 
 	/* fill the rx queue */
 	rx_fill(dev, gfp_flags);
@@ -801,7 +807,7 @@ static int eth_open(struct net_device *net)
 	struct eth_dev	*dev = netdev_priv(net);
 	struct gether	*link;
 
-	DBG(dev, "%s\n", __func__);
+	ether_printk(0,"uether::%s\n",__func__);
 	if (netif_carrier_ok(dev->net))
 		eth_start(dev, GFP_KERNEL);
 
@@ -819,11 +825,11 @@ static int eth_stop(struct net_device *net)
 	struct eth_dev	*dev = netdev_priv(net);
 	unsigned long	flags;
 
-	VDBG(dev, "%s\n", __func__);
+	ether_printk(1,"uether %s\n",__func__);
 	netif_stop_queue(net);
 
-	DBG(dev, "stop stats: rx/tx %ld/%ld, errs %ld/%ld\n",
-		dev->net->stats.rx_packets, dev->net->stats.tx_packets,
+	ether_printk(1, "uether:: %s stop stats: rx/tx %ld/%ld, errs %ld/%ld\n",
+		__func__,dev->net->stats.rx_packets, dev->net->stats.tx_packets,
 		dev->net->stats.rx_errors, dev->net->stats.tx_errors
 		);
 
@@ -1051,22 +1057,21 @@ struct net_device *gether_connect(struct gether *link)
 	struct eth_dev		*dev = the_dev;
 	int			result = 0;
 
+	ether_printk(1,"uether::u_ether %s\n",__func__);
 	if (!dev)
 		return ERR_PTR(-EINVAL);
-
+	
 	link->in_ep->driver_data = dev;
 	result = usb_ep_enable(link->in_ep);
 	if (result != 0) {
-		DBG(dev, "enable %s --> %d\n",
-			link->in_ep->name, result);
+		ether_printk(0, "uether:: %s enable %s --> %d\n",__func__,link->in_ep->name, result);
 		goto fail0;
 	}
 
 	link->out_ep->driver_data = dev;
 	result = usb_ep_enable(link->out_ep);
 	if (result != 0) {
-		DBG(dev, "enable %s --> %d\n",
-			link->out_ep->name, result);
+		ether_printk(0, "ueteher:: %s enable %s --> %d\n",__func__,link->out_ep->name, result);
 		goto fail1;
 	}
 
@@ -1134,7 +1139,7 @@ void gether_disconnect(struct gether *link)
 	if (!dev)
 		return;
 
-	DBG(dev, "%s\n", __func__);
+	ether_printk(0,"uether %s\n",__func__);
 
 	netif_stop_queue(dev->net);
 	netif_carrier_off(dev->net);
@@ -1192,8 +1197,26 @@ void gether_disconnect(struct gether *link)
 	spin_unlock(&dev->lock);
 }
 
+static void uether__create_kernel_debuglevel_entries(void)
+{
+
+        if(kernel_debuglevel_dir != NULL) {
+                debugfs_create_u32("uether_dll", S_IRUGO | S_IWUGO,
+                        kernel_debuglevel_dir, (u32 *)(&Ether_DLL));
+
+
+        } else {
+                ether_printk(0, "%s::create kernel debuglevel dir falied\n",__func__);
+        }
+}
+
+
 static int __init gether_init(void)
 {
+
+	ether_printk(0,"uether::%s\n",__func__);
+        uether__create_kernel_debuglevel_entries();
+
 	uether_wq  = create_singlethread_workqueue("uether");
 	if (!uether_wq) {
 		pr_err("%s: Unable to create workqueue: uether\n", __func__);

@@ -922,6 +922,10 @@ static int msm_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 			}
 		}
 	}
+	if (mc == SLIM_USR_MC_GENERIC_ACK) {
+		u32 mgrstat = readl_relaxed(dev->base + MGR_STATUS);
+		pr_err("generic ack:0x %x, mgrstat:0x%x", pbuf[0], mgrstat);
+	}
 	mutex_unlock(&dev->tx_lock);
 	if (msgv >= 0)
 		msm_slim_put_ctrl(dev);
@@ -1094,6 +1098,8 @@ static int msm_sat_define_ch(struct msm_slim_sat *sat, u8 *buf, u8 len, u8 mc)
 		/* part of grp. activating/removing 1 will take care of rest */
 		ret = slim_control_ch(&sat->satcl, sat->satch[i].chanh, oper,
 					false);
+		pr_err("SAT oper:%d grp start:%d, ret:%d", oper,
+				sat->satch[i].chan, ret);
 		if (!ret) {
 			for (i = 5; i < len; i++) {
 				int j;
@@ -1177,10 +1183,12 @@ static int msm_sat_define_ch(struct msm_slim_sat *sat, u8 *buf, u8 len, u8 mc)
 			*grph = chh[0];
 
 		/* part of group so activating 1 will take care of rest */
-		if (mc == SLIM_USR_MC_DEF_ACT_CHAN)
+		if (mc == SLIM_USR_MC_DEF_ACT_CHAN) {
 			ret = slim_control_ch(&sat->satcl,
 					chh[0],
 					SLIM_CH_ACTIVATE, false);
+			pr_err("SAT activate grp start: ret:%d", ret);
+		}
 	}
 	return ret;
 }
@@ -1298,6 +1306,8 @@ static void slim_sat_rxprocess(struct work_struct *work)
 			 * when this is detected
 			 */
 			if (sat->sent_capability) {
+				pr_err("Received report present from SAT:0x%x",
+						sat->satcl.laddr);
 				for (i = 0; i < sat->nsatch; i++) {
 					if (sat->satch[i].reconf) {
 						pr_err("SSR, sat:%d, rm ch:%d",
@@ -1407,6 +1417,7 @@ send_capability:
 		case SLIM_USR_MC_RECONFIG_NOW:
 			tid = buf[3];
 			gen_ack = true;
+			pr_err("SAT:LA:%x reconf req", sat->satcl.laddr);
 			ret = slim_reconfigure_now(&sat->satcl);
 			for (i = 0; i < sat->nsatch; i++) {
 				struct msm_sat_chan *sch = &sat->satch[i];
@@ -1454,6 +1465,8 @@ send_capability:
 			txn.len = 2;
 			txn.wbuf = wbuf;
 			gen_ack = true;
+			pr_err("SAT connect MC:0x%x,LA:0x%x", txn.mc,
+					sat->satcl.laddr);
 			ret = msm_xfer_msg(&dev->ctrl, &txn);
 			break;
 		case SLIM_USR_MC_DISCONNECT_PORT:
@@ -1466,6 +1479,7 @@ send_capability:
 			txn.mt = SLIM_MSG_MT_CORE;
 			txn.wbuf = wbuf;
 			gen_ack = true;
+			pr_err("SAT disconnect LA:0x%x", sat->satcl.laddr);
 			ret = msm_xfer_msg(&dev->ctrl, &txn);
 		default:
 			break;
@@ -1479,15 +1493,23 @@ send_capability:
 		wbuf[0] = tid;
 		if (!ret)
 			wbuf[1] = MSM_SAT_SUCCSS;
-		else
+		else {
+			pr_err("sat cmd:0x%x no ack:%d", mc, ret);
 			wbuf[1] = 0;
+		}
 		txn.mc = SLIM_USR_MC_GENERIC_ACK;
 		txn.la = sat->satcl.laddr;
 		txn.rl = 6;
 		txn.len = 2;
 		txn.wbuf = wbuf;
 		txn.mt = SLIM_MSG_MT_SRC_REFERRED_USER;
-		msm_xfer_msg(&dev->ctrl, &txn);
+		ret = msm_xfer_msg(&dev->ctrl, &txn);
+		if (ret) {
+			pr_err("sending ACK failed:%d", ret);
+			pr_err("clk gear:%d, subfrm mode:0x%x",
+				dev->ctrl.clkgear, dev->ctrl.sched.subfrmcode);
+			ret = 0;
+		}
 		if (satv >= 0)
 			msm_slim_put_ctrl(dev);
 	}

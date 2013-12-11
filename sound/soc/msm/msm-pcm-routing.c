@@ -31,6 +31,10 @@
 #include "msm-pcm-routing.h"
 #include "qdsp6/q6voice.h"
 
+extern unsigned int SND_DLL;
+#undef pr_debug
+#define pr_debug(fmt,args...) do { if(SND_DLL > 0) printk(fmt,##args); } while(0);
+
 struct msm_pcm_routing_bdai_data {
 	u16 port_id; /* AFE port ID */
 	u8 active; /* track if this backend is enabled */

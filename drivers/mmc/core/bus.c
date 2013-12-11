@@ -323,7 +323,11 @@ int mmc_add_card(struct mmc_card *card)
 			mmc_card_ddr_mode(card) ? "DDR " : "",
 			uhs_bus_speed_mode, type, card->rca);
 	}
-
+/* Emily Jiang, 20130403, add sanitize information log { */
+	pr_info("%s: mmc_can_sanitize card is %s\n",
+		mmc_hostname(card->host),
+		mmc_can_sanitize(card) ? "yes" : "no");
+/* } Emily Jiang, 20130403, add sanitize information log */
 #ifdef CONFIG_DEBUG_FS
 	mmc_add_card_debugfs(card);
 #endif

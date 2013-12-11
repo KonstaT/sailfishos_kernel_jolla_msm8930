@@ -28,6 +28,15 @@
 
 #include <mach/mpm.h>
 
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif //CONFIG_PM_LOG
+//Since it could not turn off PXO, we simulate fake interrupt when enabling CONFIG_PM_LOG_SIM_TEST
+//#define CONFIG_PM_LOG_SIM_TEST
+#ifdef CONFIG_PM_LOG_SIM_TEST
+#include <linux/random.h>
+#include <linux/jiffies.h>
+#endif //CONFIG_PM_LOG_SIM_TEST
 /******************************************************************************
  * Debug Definitions
  *****************************************************************************/
@@ -155,7 +164,7 @@ static void msm_mpm_set(bool wakeset)
 	mb();
 	msm_mpm_send_interrupt();
 }
-
+#ifndef CONFIG_PM_LOG_SIM_TEST
 static void msm_mpm_clear(void)
 {
 	int i;
@@ -169,7 +178,7 @@ static void msm_mpm_clear(void)
 	mb();
 	msm_mpm_send_interrupt();
 }
-
+#endif		//CONFIG_PM_LOG_SIM_TEST
 /******************************************************************************
  * Interrupt Mapping Functions
  *****************************************************************************/
@@ -406,7 +415,7 @@ bool msm_mpm_irqs_detectable(bool from_idle)
 				MSM_MPM_NR_APPS_IRQS);
 		buf[sizeof(buf) - 1] = '\0';
 
-		pr_info("%s: cannot monitor %s", __func__, buf);
+		pr_info("%s: cannot monitor %s\n", __func__, buf);
 	}
 
 	return (bool)__bitmap_empty(apps_irq_bitmap, MSM_MPM_NR_APPS_IRQS);
@@ -428,6 +437,7 @@ void msm_mpm_enter_sleep(uint32_t sclk_count, bool from_idle)
 
 void msm_mpm_exit_sleep(bool from_idle)
 {
+#ifndef CONFIG_PM_LOG_SIM_TEST
 	unsigned long pending;
 	int i;
 	int k;
@@ -439,13 +449,20 @@ void msm_mpm_exit_sleep(bool from_idle)
 			pr_info("%s: pending.%d: 0x%08lx", __func__,
 					i, pending);
 
+#ifdef CONFIG_PM_LOG
+		pmlog_update_status(i, pending);
+#endif //CONFIG_PM_LOG
 		k = find_first_bit(&pending, 32);
 		while (k < 32) {
 			unsigned int mpm_irq = 32 * i + k;
 			unsigned int apps_irq = msm_mpm_get_irq_m2a(mpm_irq);
 			struct irq_desc *desc = apps_irq ?
 				irq_to_desc(apps_irq) : NULL;
-
+			//Print wake up irq to debug power consumption
+			/* Terry Cheng, 20120607, Needn't show wake up reason when waking from idle thread {*/
+			if(!from_idle)
+				printk("mpm_irq = %d, apps_irq = %d\n", mpm_irq, apps_irq);
+			/* } Terry Cheng, 20120607, Needn't show wake up reason when waking from idle thread */
 			if (desc && !irqd_is_level_type(&desc->irq_data)) {
 				irq_set_pending(apps_irq);
 				if (from_idle)
@@ -457,6 +474,28 @@ void msm_mpm_exit_sleep(bool from_idle)
 	}
 
 	msm_mpm_clear();
+#else
+	unsigned long pending;
+	int i;
+	uint rand_interrupt;
+	uint rand_which;
+
+	srandom32((uint)jiffies);
+	rand_interrupt = random32();
+	rand_which = random32();
+
+	//update wake up source
+	pending = rand_interrupt % 32;
+	pending = 1 << pending;
+	i = rand_which % 2;
+	//pending = pending % 31;
+	
+	pr_info("%s: pending.%d: 0x%08lx", __func__, i, pending);		
+#ifdef CONFIG_PM_LOG
+	pmlog_update_status(i, pending);
+#endif	//CONFIG_PM_LOG
+	return;	
+#endif //CONFIG_PM_LOG_SIM_TEST	
 }
 
 static int __init msm_mpm_early_init(void)

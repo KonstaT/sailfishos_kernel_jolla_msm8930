@@ -845,6 +845,9 @@ EXPORT_SYMBOL_GPL(hrtimer_forward);
 static int enqueue_hrtimer(struct hrtimer *timer,
 			   struct hrtimer_clock_base *base)
 {
+	/* Bright Lee, 20130129, add debug log for hrtimer null function { */
+	BUG_ON(timer->function == NULL);
+	/* } Bright Lee, 20130129 */
 	debug_activate(timer);
 
 	timerqueue_add(&base->active, &timer->node);
@@ -1172,6 +1175,9 @@ void hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
 {
 	debug_init(timer, clock_id, mode);
 	__hrtimer_init(timer, clock_id, mode);
+	/* Bright Lee, 20130129, add debug log for hrtimer null function { */
+	timer->init_caller = __builtin_return_address(0);
+	/* } Bright Lee, 20130129 */
 }
 EXPORT_SYMBOL_GPL(hrtimer_init);
 
@@ -1208,6 +1214,13 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 	__remove_hrtimer(timer, base, HRTIMER_STATE_CALLBACK, 0);
 	timer_stats_account_hrtimer(timer);
 	fn = timer->function;
+	/* Bright Lee, 20130129, add debug log for hrtimer null function { */
+	if (fn == NULL) {
+		printk ("hrtimer bug, NULL function: init caller: %p, start_site: %p, pid: %d, comm: %s\n",
+			timer->init_caller, timer->start_site, timer->start_pid, timer->start_comm);
+		BUG();
+	}
+	/* } Bright Lee, 20130129 */
 
 	/*
 	 * Because we run timers from hardirq context, there is no chance

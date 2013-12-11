@@ -1178,4 +1178,12 @@ config RTC_DRV_QPNP
 	  To compile this driver as a module, choose M here: the
 	  module will be called qpnp-rtc.
 
+# Terry Cheng, 20130508, Support Evil alarm detection {
+config EVIL_ALARM_DETECTION
+	tristate "Evil alarm detection"
+	default y
+	help
+	  Say Y here if you want to support the Evil alarm detection.
+# } Terry Cheng, 20130508, Support Evil alarm detection 
+
 endif # RTC_CLASS

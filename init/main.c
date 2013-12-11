@@ -120,6 +120,13 @@ extern void softirq_init(void);
 
 /* Untouched command line saved by arch-specific code. */
 char __initdata boot_command_line[COMMAND_LINE_SIZE];
+
+/* Bright Lee, 20111122, reboot log { */
+#ifdef CONFIG_PANIC_LASTLOG
+#include <mach/ftags.h>
+PANIC_LOG_INIT(cmdline, "cmdline", boot_command_line, LOGTYPE_RAW);
+#endif
+
 /* Untouched saved command line (eg. for /proc) */
 char *saved_command_line;
 /* Command line for parameter parsing */
@@ -343,6 +350,13 @@ static void __init setup_command_line(char *command_line)
 	static_command_line = alloc_bootmem(strlen (command_line)+1);
 	strcpy (saved_command_line, boot_command_line);
 	strcpy (static_command_line, command_line);
+
+	/* Bright Lee, 20111122, reboot log { */
+	#ifdef CONFIG_PANIC_LASTLOG
+	__panic_logs_cmdline.addr = saved_command_line;
+	__panic_logs_cmdline.size = strlen (command_line) + 1;
+	#endif
+	/* } Bright Lee, 20121122 */
 }
 
 /*

@@ -24,6 +24,10 @@
 #include <linux/wakelock.h>
 
 #include <asm/mach/time.h>
+#include <mach/kevent.h>	//Vincent Ying, 20130516, Parse Alarm count log
+#ifdef   CONFIG_HAS_EARLYSUSPEND
+#include <linux/earlysuspend.h>
+#endif //CONFIG_HAS_EARLYSUSPEND
 
 #define ANDROID_ALARM_PRINT_ERROR (1U << 0)
 #define ANDROID_ALARM_PRINT_INIT_STATUS (1U << 1)
@@ -32,6 +36,7 @@
 #define ANDROID_ALARM_PRINT_SUSPEND (1U << 4)
 #define ANDROID_ALARM_PRINT_INT (1U << 5)
 #define ANDROID_ALARM_PRINT_FLOW (1U << 6)
+#define ALARM_COUNT_THRESHOLD 500 //Vincent Ying, 20130524, use for trigger kevent
 
 static int debug_mask = ANDROID_ALARM_PRINT_ERROR | \
 			ANDROID_ALARM_PRINT_INIT_STATUS;
@@ -68,6 +73,15 @@ static struct wake_lock alarm_rtc_wake_lock;
 static struct platform_device *alarm_platform_dev;
 struct alarm_queue alarms[ANDROID_ALARM_TYPE_COUNT];
 static bool suspended;
+/* Vincent Ying, 20130527 use for test alarm count{*/
+#ifdef CONFIG_HAS_EARLYSUSPEND
+int flag = 1;
+int alarm_suspendfail_count;
+struct early_suspend suspend_counted;
+static void refreshcount_resume(struct early_suspend *son);
+//static void checkcount_suspend(struct early_suspend *son);
+#endif //CONFIG_HAS_EARLYSUSPEND
+/* }Vincent Ying, 20130527 use for test alarm count*/
 
 static void update_timer_locked(struct alarm_queue *base, bool head_removed)
 {
@@ -447,6 +461,16 @@ static int alarm_suspend(struct platform_device *pdev, pm_message_t state)
 			rtc_delta.tv_sec, rtc_delta.tv_nsec);
 		if (rtc_current_time + 1 >= rtc_alarm_time) {
 			pr_alarm(SUSPEND, "alarm about to go off\n");
+			/* Vincent Ying,20130516, test alarm suspend fail count{*/
+			#ifdef CONFIG_HAS_EARLYSUSPEND
+			
+			alarm_suspendfail_count++;
+			if ( alarm_suspendfail_count >= ALARM_COUNT_THRESHOLD && flag == 1){
+				flag = 0;
+				kevent_trigger(KEVENT_ALARM_COUNT);
+			}	
+			#endif //CONFIG_HAS_EARLYSUSPEND
+			/*}Vincent Ying ,20130516, test alarm suspend fail count*/
 			memset(&rtc_alarm, 0, sizeof(rtc_alarm));
 			rtc_alarm.enabled = 0;
 			rtc_set_alarm(alarm_rtc_dev, &rtc_alarm);
@@ -576,6 +600,17 @@ static int __init alarm_driver_init(void)
 	int err;
 	int i;
 
+/* Vincent Ying,20120520, a new resume cb for alarm_count refresh and register{*/
+	#ifdef CONFIG_HAS_EARLYSUSPEND
+	alarm_suspendfail_count = 0;
+	suspend_counted.suspend = NULL;
+	suspend_counted.resume = refreshcount_resume;
+	suspend_counted.level = EARLY_SUSPEND_LEVEL_STOP_DRAWING - 1;
+
+	register_early_suspend(&suspend_counted);
+	#endif //CONFIG_HAS_EARLYSUSPEND
+/* Vincent Ying,20120520, a new resume cb for alarm_count refresh register{*/
+
 	for (i = 0; i < ANDROID_ALARM_SYSTEMTIME; i++) {
 		hrtimer_init(&alarms[i].timer,
 				CLOCK_REALTIME, HRTIMER_MODE_ABS);
@@ -602,11 +637,23 @@ err1:
 	return err;
 }
 
+/* Vincent Ying,20130520, a new resume cb for alarm_count refresh{*/
+static void refreshcount_resume(struct early_suspend *son){
+		alarm_suspendfail_count = 0;
+		flag = 1;
+}
+
+/*static void checkcount_suspend(struct early_suspend *son){
+		alarm_suspendfail_count = 0;
+}*/
+/* Vincent Ying,20130520, a new resume cb for alarm_count refresh{*/
+
 static void  __exit alarm_exit(void)
 {
 	class_interface_unregister(&rtc_alarm_interface);
 	wake_lock_destroy(&alarm_rtc_wake_lock);
 	platform_driver_unregister(&alarm_driver);
+	unregister_early_suspend(&suspend_counted); // Vincent Ying, 20130524 unregister suspend_count c.b.
 }
 
 late_initcall(alarm_late_init);

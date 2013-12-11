@@ -147,6 +147,9 @@ static int pm8xxx_irq_block_handler(struct pm_irq_chip *chip, int block)
 {
 	int pmirq, irq, i, ret = 0;
 	u8 bits;
+	#ifdef CONFIG_PM_LOG
+	extern int is_wakeup_from_pc;
+	#endif //CONFIG_PM_LOG
 
 	ret = pm8xxx_read_block_irq(chip, block, &bits);
 	if (ret) {
@@ -163,6 +166,13 @@ static int pm8xxx_irq_block_handler(struct pm_irq_chip *chip, int block)
 		if (bits & (1 << i)) {
 			pmirq = block * 8 + i;
 			irq = pmirq + chip->irq_base;
+			/* Terry Cheng, 20120919, Show PMIC Show resume wakeup irq {*/			
+			#ifdef CONFIG_PM_LOG
+			if (is_wakeup_from_pc){
+				pr_info("Show resume wakeup pmirq = %d\n", pmirq);
+			}
+			#endif //CONFIG_PM_LOG			
+			/* } Terry Cheng, 20120919, Show PMIC Show resume wakeup irq */			
 			generic_handle_irq(irq);
 		}
 	}

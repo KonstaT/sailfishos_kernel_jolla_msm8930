@@ -1477,6 +1477,11 @@ static void inet_forward_change(struct net *net)
 	struct net_device *dev;
 	int on = IPV4_DEVCONF_ALL(net, FORWARDING);
 
+	/* Bright Lee, 20120430, socket filter { */
+	extern void update_ip_forwarding_status(unsigned on);
+	update_ip_forwarding_status (on);
+	/* } Bright Lee, 20120430 */
+
 	IPV4_DEVCONF_ALL(net, ACCEPT_REDIRECTS) = !on;
 	IPV4_DEVCONF_DFLT(net, FORWARDING) = on;
 

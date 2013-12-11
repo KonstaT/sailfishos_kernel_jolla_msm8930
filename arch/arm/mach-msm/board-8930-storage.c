@@ -63,7 +63,7 @@ static struct msm_mmc_reg_data mmc_vdd_reg_data[MAX_SDCC_CONTROLLER] = {
 		 * hardware revisions - maybe once that is done, this can be
 		 * reverted.
 		 */
-		.always_on = 1,
+		//.always_on = 1, /* Emily Jiang, 20121211, turn off regulator when unuse */
 		.lpm_sup = 1,
 		.hpm_uA = 800000, /* 800mA */
 		.lpm_uA = 9000,
@@ -86,7 +86,7 @@ static struct msm_mmc_reg_data mmc_vdd_io_reg_data[MAX_SDCC_CONTROLLER] = {
 		.name = "sdc_vdd_io",
 		.high_vol_level = 2950000,
 		.low_vol_level = 1850000,
-		.always_on = 1,
+		//.always_on = 1, /* Emily Jiang, 20121211, turn off regulator when unuse */
 		.lpm_sup = 1,
 		/* Max. Active current required is 16 mA */
 		.hpm_uA = 16000,
@@ -278,9 +278,9 @@ static struct mmc_platform_data msm8960_sdc3_data = {
 	.irq_flags	= IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 	.is_status_gpio_active_low = true,
 	.xpc_cap	= 1,
-	.uhs_caps	= (MMC_CAP_UHS_SDR12 | MMC_CAP_UHS_SDR25 |
-			MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_DDR50 |
-			MMC_CAP_UHS_SDR104 | MMC_CAP_MAX_CURRENT_800),
+	//.uhs_caps	= (MMC_CAP_UHS_SDR12 | MMC_CAP_UHS_SDR25 |
+		//	MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_DDR50 |
+		//	MMC_CAP_UHS_SDR104 | MMC_CAP_MAX_CURRENT_800),
 	.mpm_sdiowakeup_int = MSM_MPM_PIN_SDC3_DAT1,
 	.msm_bus_voting_data = &sps_to_ddr_bus_voting_data,
 };
@@ -323,7 +323,18 @@ void __init msm8930_init_mmc(void)
 		msm8960_sdc3_data.wpswitch_gpio = 0;
 		msm8960_sdc3_data.is_wpswitch_active_low = false;
 	}
-
+	
+	/* Emily Jiang, 20130326, modify clk rate from MMC_CAP_UHS_SDR104 to MMC_CAP_UHS_SDR25,in order to support UHS-1 SDR104 sd card. {*/  
+	if ( msm_project_id <= SAPPORO && system_rev >= EVT0) {
+		msm8960_sdc3_data.uhs_caps |= (MMC_CAP_UHS_SDR12 | MMC_CAP_UHS_SDR25 |
+			MMC_CAP_MAX_CURRENT_800);
+	} else { 
+		// unknown project
+		msm8960_sdc3_data.uhs_caps |= (MMC_CAP_UHS_SDR12 | MMC_CAP_UHS_SDR25 |
+			MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_DDR50 |
+			MMC_CAP_UHS_SDR104 | MMC_CAP_MAX_CURRENT_800);
+	}
+	/* } Emily Jiang, 20130326, modify clk rate from MMC_CAP_UHS_SDR104 to MMC_CAP_UHS_SDR25,in order to support UHS-1 SDR104 sd card. */
 	msm_add_sdcc(3, &msm8960_sdc3_data);
 #endif
 }

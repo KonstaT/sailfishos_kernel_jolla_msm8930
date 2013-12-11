@@ -34,10 +34,10 @@
  * a "gcc --combine ... part1.c part2.c part3.c ... " build would.
  */
 
-#include "composite.c"
-#include "usbstring.c"
-#include "config.c"
-#include "epautoconf.c"
+//#include "composite.c"
+//#include "usbstring.c"
+//#include "config.c"
+//#include "epautoconf.c"
 
 #include "f_hid.c"
 
@@ -47,8 +47,9 @@ struct hidg_func_node {
 	struct hidg_func_descriptor *func;
 };
 
-static LIST_HEAD(hidg_func_list);
 
+static LIST_HEAD(hidg_func_list);
+#if 0
 /*-------------------------------------------------------------------------*/
 
 static struct usb_device_descriptor device_desc = {
@@ -115,18 +116,19 @@ static struct usb_gadget_strings *dev_strings[] = {
 };
 
 
-
+#endif
 /****************************** Configurations ******************************/
 
-static int __init do_config(struct usb_configuration *c)
+static int  do_config(struct usb_configuration *c)
 {
 	struct hidg_func_node *e;
 	int func = 0, status = 0;
-
+#if 0
 	if (gadget_is_otg(c->cdev->gadget)) {
 		c->descriptors = otg_desc;
 		c->bmAttributes |= USB_CONFIG_ATT_WAKEUP;
 	}
+#endif
 
 	list_for_each_entry(e, &hidg_func_list, node) {
 		status = hidg_bind_config(c, e->func, func++);
@@ -136,21 +138,24 @@ static int __init do_config(struct usb_configuration *c)
 
 	return status;
 }
-
+#if 0
 static struct usb_configuration config_driver = {
 	.label			= "HID Gadget",
 	.bConfigurationValue	= 1,
 	/* .iConfiguration = DYNAMIC */
 	.bmAttributes		= USB_CONFIG_ATT_SELFPOWER,
 };
-
+#endif
 /****************************** Gadget Bind ******************************/
 
-static int __init hid_bind(struct usb_composite_dev *cdev)
+static int hid_bind(struct usb_composite_dev *cdev)
 {
+#if 0
 	struct usb_gadget *gadget = cdev->gadget;
+	int gcnum = 0;
+#endif
 	struct list_head *tmp;
-	int status, gcnum, funcs = 0;
+	int status, funcs = 0;
 
 	list_for_each(tmp, &hidg_func_list)
 		funcs++;
@@ -162,7 +167,7 @@ static int __init hid_bind(struct usb_composite_dev *cdev)
 	status = ghid_setup(cdev->gadget, funcs);
 	if (status < 0)
 		return status;
-
+#if 0
 	gcnum = usb_gadget_controller_number(gadget);
 	if (gcnum >= 0)
 		device_desc.bcdDevice = cpu_to_le16(0x0300 | gcnum);
@@ -197,16 +202,23 @@ static int __init hid_bind(struct usb_composite_dev *cdev)
 
 	dev_info(&gadget->dev, DRIVER_DESC ", version: " DRIVER_VERSION "\n");
 
+#endif
 	return 0;
 }
 
+static void hid_cleanup(void)
+{
+	ghid_cleanup();
+	//return;
+}
+#if 0
 static int __exit hid_unbind(struct usb_composite_dev *cdev)
 {
 	ghid_cleanup();
 	return 0;
 }
-
-static int __init hidg_plat_driver_probe(struct platform_device *pdev)
+#endif
+static int hidg_plat_driver_probe(struct platform_device *pdev)
 {
 	struct hidg_func_descriptor *func = pdev->dev.platform_data;
 	struct hidg_func_node *entry;
@@ -226,6 +238,56 @@ static int __init hidg_plat_driver_probe(struct platform_device *pdev)
 	return 0;
 }
 
+
+static struct hidg_func_descriptor usb_hid_pdata = {
+    .subclass           = 0, /* No subclass */
+    .protocol           = 1, /* Keyboard */
+    .report_length      = 8,
+    .report_desc_length = 63,
+    .report_desc        = {
+        0x05, 0x01, /* USAGE_PAGE (Generic Desktop)           */
+        0x09, 0x06, /* USAGE (Keyboard)                       */
+        0xa1, 0x01, /* COLLECTION (Application)               */
+        0x05, 0x07, /*   USAGE_PAGE (Keyboard)                */
+        0x19, 0xe0, /*   USAGE_MINIMUM (Keyboard LeftControl) */
+        0x29, 0xe7, /*   USAGE_MAXIMUM (Keyboard Right GUI)   */
+        0x15, 0x00, /*   LOGICAL_MINIMUM (0)                  */
+        0x25, 0x01, /*   LOGICAL_MAXIMUM (1)                  */
+        0x75, 0x01, /*   REPORT_SIZE (1)                      */
+        0x95, 0x08, /*   REPORT_COUNT (8)                     */
+        0x81, 0x02, /*   INPUT (Data,Var,Abs)                 */
+        0x95, 0x01, /*   REPORT_COUNT (1)                     */
+        0x75, 0x08, /*   REPORT_SIZE (8)                      */
+        0x81, 0x03, /*   INPUT (Cnst,Var,Abs)                 */
+        0x95, 0x05, /*   REPORT_COUNT (5)                     */
+        0x75, 0x01, /*   REPORT_SIZE (1)                      */
+        0x05, 0x08, /*   USAGE_PAGE (LEDs)                    */
+        0x19, 0x01, /*   USAGE_MINIMUM (Num Lock)             */
+        0x29, 0x05, /*   USAGE_MAXIMUM (Kana)                 */
+        0x91, 0x02, /*   OUTPUT (Data,Var,Abs)                */
+        0x95, 0x01, /*   REPORT_COUNT (1)                     */
+        0x75, 0x03, /*   REPORT_SIZE (3)                      */
+        0x91, 0x03, /*   OUTPUT (Cnst,Var,Abs)                */
+        0x95, 0x06, /*   REPORT_COUNT (6)                     */
+        0x75, 0x08, /*   REPORT_SIZE (8)                      */
+        0x15, 0x00, /*   LOGICAL_MINIMUM (0)                  */
+        0x25, 0x65, /*   LOGICAL_MAXIMUM (101)                */
+        0x05, 0x07, /*   USAGE_PAGE (Keyboard)                */
+        0x19, 0x00, /*   USAGE_MINIMUM (Reserved)             */
+        0x29, 0x65, /*   USAGE_MAXIMUM (Keyboard Application) */
+        0x81, 0x00, /*   INPUT (Data,Ary,Abs)                 */
+        0xc0        /* END_COLLECTION                         */
+    }
+};
+
+struct platform_device usb_hid = {
+    .name           = "hidg",
+    .id             = 0,
+    .num_resources  = 0,
+    .resource       = 0,
+    .dev.platform_data  = &usb_hid_pdata,
+}; //Sonia add it 
+#if 0
 static int __devexit hidg_plat_driver_remove(struct platform_device *pdev)
 {
 	struct hidg_func_node *e, *n;
@@ -286,3 +348,4 @@ static void __exit hidg_cleanup(void)
 	usb_composite_unregister(&hidg_driver);
 }
 module_exit(hidg_cleanup);
+#endif

@@ -70,6 +70,9 @@ static DEFINE_SPINLOCK(cpufreq_driver_lock);
  */
 static DEFINE_PER_CPU(int, cpufreq_policy_cpu);
 static DEFINE_PER_CPU(struct rw_semaphore, cpu_policy_rwsem);
+/* Terry Cheng, 20120827, Limit scale to max cpufreq when getting input event {*/
+DEFINE_PER_CPU(int, cpufreq_init_done);
+/* } Terry Cheng, 20120827, Limit scale to max cpufreq when getting input event */
 
 #define lock_policy_rwsem(mode, cpu)					\
 int lock_policy_rwsem_##mode						\
@@ -265,6 +268,10 @@ void cpufreq_notify_transition(struct cpufreq_freqs *freqs, unsigned int state)
 	struct cpufreq_policy *policy;
 
 	BUG_ON(irqs_disabled());
+	/* Terry Cheng, 20120827, Check cpufreq_driver whether NULL before getting information {*/
+	if (cpufreq_driver == NULL)
+		return;
+	/* } Terry Cheng, 20120827, Check cpufreq_driver whether NULL before getting information  */
 
 	freqs->flags = cpufreq_driver->flags;
 	pr_debug("notification %u of frequency transition to %u kHz\n",
@@ -1028,6 +1035,9 @@ static int cpufreq_add_dev(struct device *dev, struct subsys_interface *sif)
 	kobject_uevent(&policy->kobj, KOBJ_ADD);
 	module_put(cpufreq_driver->owner);
 	pr_debug("initialization complete\n");
+	/* Terry Cheng, 20120827, Limit scale to max cpufreq when getting input event {*/
+	per_cpu(cpufreq_init_done, cpu) = 1;
+	/* } Terry Cheng, 20120827, Limit scale to max cpufreq when getting input event */
 
 	return 0;
 

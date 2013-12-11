@@ -92,7 +92,10 @@ void save_stack_trace_tsk(struct task_struct *tsk, struct stack_trace *trace)
 	data.skip = trace->skip;
 
 	if (tsk != current) {
-#ifdef CONFIG_SMP
+/* Bright Lee, 20130322, enable stack trace when android hang in debug stage { */
+// #ifdef CONFIG_SMP
+#if 0
+/* } Bright Lee, 20130322 */
 		/*
 		 * What guarantees do we have here that 'tsk' is not
 		 * running on another CPU?  For now, ignore it as we

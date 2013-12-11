@@ -37,6 +37,8 @@
 #include "acpuclock.h"
 #include "acpuclock-krait.h"
 #include "avs.h"
+//Terry Cheng, 20121219,  Read PTE efuse for BB analyze 
+#include <linux/debugfs.h>
 
 /* MUX source selects. */
 #define PRI_SRC_SEL_SEC_SRC	0
@@ -44,6 +46,10 @@
 #define PRI_SRC_SEL_HFPLL_DIV2	2
 
 #define SECCLKAGD		BIT(4)
+
+/* Terry Cheng, 20121219,  Read PTE efuse for BB analyze {*/
+static u32 pte_efuse_val = 0; //Move here as for pvs debugfs 
+/* }Terry Cheng, 20121219,  Read PTE efuse for BB analyze */
 
 static DEFINE_MUTEX(driver_lock);
 static DEFINE_SPINLOCK(l2_lock);
@@ -537,7 +543,7 @@ static struct acpuclk_data acpuclk_krait_data = {
 };
 
 /* Initialize a HFPLL at a given rate and enable it. */
-static void __init hfpll_init(struct scalable *sc,
+static void __cpuinit hfpll_init(struct scalable *sc,
 			      const struct core_speed *tgt_s)
 {
 	dev_dbg(drv.dev, "Initializing HFPLL%d\n", sc - drv.scalable);
@@ -986,7 +992,9 @@ static struct pvs_table * __init select_freq_plan(u32 pte_efuse_phys,
 			struct pvs_table (*pvs_tables)[NUM_PVS])
 {
 	void __iomem *pte_efuse;
-	u32 pte_efuse_val, tbl_idx, bin_idx;
+	//Terry Cheng, 20121225, Move pte_efuse_val as global value 
+	//u32 pte_efuse_val, tbl_idx, bin_idx;
+	u32 tbl_idx, bin_idx;
 
 	pte_efuse = ioremap(pte_efuse_phys, 4);
 	if (!pte_efuse) {
@@ -1093,3 +1101,49 @@ int __init acpuclk_krait_init(struct device *dev,
 
 	return 0;
 }
+/* Terry Cheng, 20121220, Read msm8930 pvs via debugfs {*/
+#ifdef CONFIG_DEBUG_FS
+static int krait_get(void *data, u64 *val)
+{
+	u32  pvs=0;
+	pvs = ((pte_efuse_val >> 10) & 0x7);
+	if (pvs == 0x7)
+		pvs = (pte_efuse_val >> 13) & 0x7;		
+	*val = (u64)pvs;		
+	return 0;
+}
+
+static int qdsp6_get(void *data, u64 *val)
+{
+	*val = (u64)((pte_efuse_val >> 16) & 0x7);
+	return 0;
+}
+static int vdd_core_get(void *data, u64 *val)
+{
+	*val = (u64)(pte_efuse_val >> 22 & 0x7);
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(krait_fops, krait_get,
+						NULL, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(qdsp6_fops, qdsp6_get,
+						NULL, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(vdd_core_fops, vdd_core_get,
+						NULL, "%llu\n");
+
+static int __init pvs_debugfs_init(void)
+{
+	struct dentry *dent;
+	dent = debugfs_create_dir("pvs", 0);
+	if (IS_ERR(dent))
+		return 0;
+
+	//Create debugfs file
+	debugfs_create_file("krait", 0644, dent, 0, &krait_fops);
+	debugfs_create_file("qdsp6", 0644, dent, 0, &qdsp6_fops);
+	debugfs_create_file("vdd_core", 0644, dent, 0, &vdd_core_fops);
+
+	return 0;
+}
+device_initcall(pvs_debugfs_init);
+#endif	//CONFIG_DEBUG_FS
+/* } Terry Cheng, 20121220, Read msm8930 pvs via debugfs */

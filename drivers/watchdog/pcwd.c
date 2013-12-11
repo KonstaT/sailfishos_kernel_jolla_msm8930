@@ -507,7 +507,10 @@ static int pcwd_get_status(int *status)
 			*status |= WDIOF_OVERHEAT;
 			if (temp_panic) {
 				pr_info("Temperature overheat trip!\n");
-				kernel_power_off();
+				//Terry, Add power off reason +
+				//kernel_power_off();
+				kernel_power_off("Watchdog - Over Heat");
+				//Terry, Add power off reason -
 			}
 		}
 	} else {
@@ -518,7 +521,10 @@ static int pcwd_get_status(int *status)
 			*status |= WDIOF_OVERHEAT;
 			if (temp_panic) {
 				pr_info("Temperature overheat trip!\n");
-				kernel_power_off();
+				//Terry, Add power off reason +
+				//kernel_power_off();
+				kernel_power_off("Watchdog - Over Heat");
+				//Terry, Add power off reason -
 			}
 		}
 	}

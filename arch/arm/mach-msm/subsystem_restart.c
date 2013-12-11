@@ -806,6 +806,10 @@ static int __init subsys_restart_init(void)
 {
 	int ret;
 
+	/* Terry Cheng, 20120515, Enable independently modem subsystem restart  {*/
+	restart_level = RESET_SUBSYS_INDEPENDENT;//RESET_SOC
+	/* }Terry Cheng, 20120515, Enable independently modem subsystem restart*/
+
 	ssr_wq = alloc_workqueue("ssr_wq", WQ_CPU_INTENSIVE, 0);
 	BUG_ON(!ssr_wq);
 
@@ -829,6 +833,16 @@ err_bus:
 	return ret;
 }
 arch_initcall(subsys_restart_init);
+
+/* Terry Cheng, 20120517, parser subsystem ramdump from cmd line {*/
+static int __init subsystem_ramdump_setup(char *str)
+{
+	enable_ramdumps = 1;
+	printk("enable_ramdumps = %d\n", enable_ramdumps);
+	return 1;
+}
+__setup("Qsubsys_ramdump=", subsystem_ramdump_setup);
+/* }Terry Cheng, 20120517, parser subsystem ramdump from cmd line */
 
 MODULE_DESCRIPTION("Subsystem Restart Driver");
 MODULE_LICENSE("GPL v2");

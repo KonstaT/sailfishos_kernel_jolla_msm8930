@@ -27,6 +27,10 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
+//Terry Add debugfs to config and control PMIC GPIO 
+#include <linux/debugfs.h>
+#define PM89XX_GPIO_PM_TO_SYS(pm_gpio)	(pm_gpio - 1 + NR_GPIO_IRQS)
+
 /* GPIO registers */
 #define	SSBI_REG_ADDR_GPIO_BASE		0x150
 #define	SSBI_REG_ADDR_GPIO(n)		(SSBI_REG_ADDR_GPIO_BASE + n)
@@ -136,6 +140,14 @@ static int dir_map[] = {
 	PM_GPIO_MODE_INPUT,
 	PM_GPIO_MODE_BOTH,
 };
+/* Terry cheng, 20110829, Implement GPIO debug fs  {*/
+static int decode_dir_map[] = {
+	PM_GPIO_MODE_OUTPUT,
+	PM_GPIO_MODE_OFF,
+	PM_GPIO_MODE_BOTH,	
+	PM_GPIO_MODE_INPUT,
+};
+/* }Terry cheng, 20110829, Implement GPIO debug fs  */
 
 static int pm_gpio_set_direction(struct pm_gpio_chip *pm_gpio_chip,
 			      unsigned gpio, int direction)
@@ -243,18 +255,26 @@ static void pm_gpio_dbg_show(struct seq_file *s, struct gpio_chip *gpio_chip)
 	u8 mode, state, bank;
 	const char *label;
 	int i, j;
+	/* Terry Cheng, 20111026, fine tune PMIC 8921 debugfs output data {*/
+	int vin = 0, out_buff=0, out_val=0, pull=0, out_str=0, disable=0, function=0, inv_int_pol=0;
+	static const char * const vin_str[] = { "VPH", "BB", "S4", "L15", "L4", "L3", "L17" };
+	static const char * const out_stregn_str[] = { "No", "High", "Med", "Low" };
+	static const char * const pull_str[] = { "30", "1P5", "31P5", "1P5_30", "DN", "No" };
+	seq_printf(s, "GPIO-num  requested     state vin mode outbuf outval pull str  dis func inv\n");
 
 	for (i = 0; i < gpio_chip->ngpio; i++) {
 		label = gpiochip_is_requested(gpio_chip, i);
 		mode = (pm_gpio_chip->bank1[i] & PM_GPIO_MODE_MASK) >>
 			PM_GPIO_MODE_SHIFT;
 		state = pm_gpio_get(pm_gpio_chip, i);
+#if 0		
 		seq_printf(s, "gpio-%-3d (%-12.12s) %-10.10s"
 				" %s",
 				gpio_chip->base + i,
 				label ? label : "--",
 				cmode[mode],
 				state ? "hi" : "lo");
+#endif // if 0
 		for (j = 0; j < PM_GPIO_BANKS; j++) {
 			bank = j << PM_GPIO_BANK_SHIFT;
 			pm8xxx_writeb(gpio_chip->dev->parent,
@@ -263,11 +283,134 @@ static void pm_gpio_dbg_show(struct seq_file *s, struct gpio_chip *gpio_chip)
 			pm8xxx_readb(gpio_chip->dev->parent,
 					SSBI_REG_ADDR_GPIO(i),
 					&bank);
-			seq_printf(s, " 0x%02x", bank);
+			//seq_printf(s, " 0x%02x", bank);
+			switch (j) {
+				case 0:
+					vin = (bank & PM_GPIO_VIN_MASK) >>PM_GPIO_VIN_SHIFT;
+					break;
+				case 1:
+					out_buff = (bank & 0x02) >> 1;
+					out_val = (bank & 0x01) ;					
+					mode = (bank & 0x0c)>>2;
+					break;
+				case 2:
+					pull = (bank & PM_GPIO_PULL_MASK) >> PM_GPIO_PULL_SHIFT;
+					break;
+				case 3:
+					out_str = (bank & PM_GPIO_OUT_STRENGTH_MASK) >>PM_GPIO_OUT_STRENGTH_SHIFT;
+					disable = (bank & 0x01);					
+					break;
+				case 4:
+					
+					function = (bank & PM_GPIO_FUNC_MASK)>>PM_GPIO_FUNC_SHIFT;
+					break;
+				case 5:
+					if (bank & PM_GPIO_NON_INT_POL_INV)
+						inv_int_pol= 0;
+					else
+						inv_int_pol= 1;
+					break;
+				default:
+					break;
 		}
+		}
+		//seq_printf(s, "\n");
+		seq_printf(s, "gpio-%-3d (%-12.12s)"
+				" %s   %3s %3s %5d %4d %8s  %2s  %3s %3d %4s",
+				gpio_chip->base + i,
+				label ? label : "--",
+				state ? "hi" : "lo", 
+				vin_str[vin], cmode[mode], out_buff, out_val, pull_str[pull], out_stregn_str[out_str], disable ? "Yes": "No", function, inv_int_pol ? "Yes" : "No");
 		seq_printf(s, "\n");
+		/* } Terry Cheng, 20111026, fine tune PMIC 8921 debugfs output data */		
+
 	}
 }
+
+/* Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp {*/
+void pm_gpio_dbg_show_suspend_resume_dump(void)
+{
+	static const char * const cmode[] = { "in", "in/out", "out", "off" };
+	struct pm_gpio_chip *pm_gpio_chip = NULL;
+	struct gpio_chip *gpio_chip = NULL;
+	u8 mode, state, bank;
+	const char *label;
+	int i, j;
+	int vin = 0, out_buff=0, out_val=0, pull=0, out_str=0, disable=0, function=0, inv_int_pol=0;
+	static const char * const vin_str[] = { "VPH", "BB", "S4", "L15", "L4", "L3", "L17" };
+	static const char * const out_stregn_str[] = { "No", "High", "Med", "Low" };
+	static const char * const pull_str[] = { "30", "1P5", "31P5", "1P5_30", "DN", "No" };
+
+	list_for_each_entry(pm_gpio_chip, &pm_gpio_chips, link) {
+		if(pm_gpio_chip)
+		{
+			gpio_chip = &pm_gpio_chip->gpio_chip;
+			break;
+		}	
+	}
+
+	if(!pm_gpio_chip)
+	{
+		pr_err("Cannot find PMIC GPIO chip\n");
+		return;
+	}	
+	
+	printk("GPIO-num  requested     state vin mode outbuf outval pull str  dis func inv\n");
+
+	for (i = 0; i < gpio_chip->ngpio; i++) {
+		label = gpiochip_is_requested(gpio_chip, i);
+		mode = (pm_gpio_chip->bank1[i] & PM_GPIO_MODE_MASK) >>
+			PM_GPIO_MODE_SHIFT;
+		state = pm_gpio_get(pm_gpio_chip, i);
+			for (j = 0; j < PM_GPIO_BANKS; j++) {
+				bank = j << PM_GPIO_BANK_SHIFT;
+				pm8xxx_writeb(gpio_chip->dev->parent,
+						SSBI_REG_ADDR_GPIO(i),
+						bank);
+				pm8xxx_readb(gpio_chip->dev->parent,
+						SSBI_REG_ADDR_GPIO(i),
+						&bank);
+				switch (j) {
+					case 0:
+						vin = (bank & PM_GPIO_VIN_MASK) >>PM_GPIO_VIN_SHIFT;
+						break;
+					case 1:
+						out_buff = (bank & 0x02) >> 1;
+						out_val = (bank & 0x01) ;					
+						mode = (bank & 0x0c)>>2;
+						break;
+					case 2:
+						pull = (bank & PM_GPIO_PULL_MASK) >> PM_GPIO_PULL_SHIFT;
+						break;
+					case 3:
+						out_str = (bank & PM_GPIO_OUT_STRENGTH_MASK) >>PM_GPIO_OUT_STRENGTH_SHIFT;
+						disable = (bank & 0x01);					
+						break;
+					case 4:
+						
+						function = (bank & PM_GPIO_FUNC_MASK)>>PM_GPIO_FUNC_SHIFT;
+						break;
+					case 5:
+						if (bank & PM_GPIO_NON_INT_POL_INV)
+							inv_int_pol= 0;
+						else
+							inv_int_pol= 1;
+						break;
+					default:
+						break;
+				}
+			}
+		printk("gpio-%-3d (%-12.12s)"
+				" %s   %3s %3s %5d %4d %8s  %2s  %3s %3d %4s",
+				gpio_chip->base + i,
+				label ? label : "--",
+				state ? "hi" : "lo", 
+				vin_str[vin], cmode[mode], out_buff, out_val, pull_str[pull], out_stregn_str[out_str], disable ? "Yes": "No", function, inv_int_pol ? "Yes" : "No");
+		printk("\n");
+	}
+}
+EXPORT_SYMBOL_GPL(pm_gpio_dbg_show_suspend_resume_dump);
+/* } Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp */
 
 static int __devinit pm_gpio_probe(struct platform_device *pdev)
 {
@@ -377,6 +520,9 @@ int pm8xxx_gpio_config(int gpio, struct pm_gpio *param)
 		}
 	}
 	mutex_unlock(&pm_gpio_chips_lock);
+	printk("GPIO %d dir = %d out buf = %d out value = %d pull = %d vol sel %d stren = %d func = %d inv = %d dis = %d\n",
+		pm_gpio, param->direction, param->output_buffer, param->output_value, param->pull, param->vin_sel, param->out_strength, param->function, param->inv_int_pol, param->disable_pin);
+	
 	if (pm_gpio < 0) {
 		pr_err("called on gpio %d not handled by any pmic\n", gpio);
 		return -EINVAL;
@@ -455,6 +601,229 @@ static void __exit pm_gpio_exit(void)
 	platform_driver_unregister(&pm_gpio_driver);
 }
 module_exit(pm_gpio_exit);
+/* Terry cheng, 20110829, Implement GPIO debug fs { */
+#if defined(CONFIG_DEBUG_FS)
+static unsigned int pmic_gpio_num = 0;
+static unsigned int pmic_gpio_debugfs_results = 0;
+
+//Config 
+static int pmic_gpio_config_set(void *data, u64 val)
+{
+	unsigned int config = val;
+	struct pm_gpio param;
+	pmic_gpio_num = (unsigned int)PMIC_GPIO_PIN(config);
+	param.direction = PMIC_GPIO_DIR(config);
+	param.output_buffer = PMIC_GPIO_OUT_BUF(config);
+	param.output_value = PMIC_GPIO_OUT_VAL(config);
+	param.pull = PMIC_GPIO_PULL(config);
+	param.vin_sel = PMIC_GPIO_VIN(config);
+	param.out_strength= PMIC_GPIO_DRVSTR(config);
+	param.function= PMIC_GPIO_FUNC(config);
+	param.inv_int_pol= PMIC_GPIO_INV(config);
+	param.disable_pin= PMIC_GPIO_DIS(config);
+	
+	pmic_gpio_debugfs_results= pm8xxx_gpio_config(PM89XX_GPIO_PM_TO_SYS(pmic_gpio_num+1), &param);
+	return 0;
+}
+static int pmic_gpio_config_get(void *data, u64 *val)
+{
+
+	struct pm_gpio_chip *pm_gpio_chip = NULL;
+	struct gpio_chip *gpio_chip = NULL;
+	u8 mode=0;
+	u8 bank=0;
+	int vin = 0, out_buff=0, out_val=0, pull=0, out_str=0, disable=0, function=0, inv_int_pol=0;
+	int j;
+	
+	//20120418, Terry Cheng, Fix get wrong pm_gpio_chip +
+	mutex_lock(&pm_gpio_chips_lock);
+	list_for_each_entry(pm_gpio_chip, &pm_gpio_chips, link) {
+		if(pm_gpio_chip)
+		{
+		gpio_chip = &pm_gpio_chip->gpio_chip;
+			break;
+		}	
+	}
+	mutex_unlock(&pm_gpio_chips_lock);
+
+	if(!pm_gpio_chip)
+	{
+		pr_err("Cannot find PMIC GPIO chip\n");
+		return 1;
+	}
+	//20120418, Terry Cheng, Fix get wrong pm_gpio_chip -	
+	//Direction
+	mode = (pm_gpio_chip->bank1[pmic_gpio_num] & PM_GPIO_MODE_MASK) >> PM_GPIO_MODE_SHIFT;
+	for (j = 0; j < PM_GPIO_BANKS; j++) {
+		bank = j << PM_GPIO_BANK_SHIFT;
+		pm8xxx_writeb(gpio_chip->dev->parent,
+				SSBI_REG_ADDR_GPIO(pmic_gpio_num),
+				bank);
+		pm8xxx_readb(gpio_chip->dev->parent,
+				SSBI_REG_ADDR_GPIO(pmic_gpio_num),
+				&bank);
+		switch (j) {
+			case 0:
+				vin = (bank & PM_GPIO_VIN_MASK) >>PM_GPIO_VIN_SHIFT;
+				break;
+			case 1:
+				out_buff = (bank & 0x02) >> 1;
+				out_val = (bank & 0x01) ;					
+				mode = decode_dir_map[(bank & 0x0c)>>2];
+				break;
+			case 2:
+				pull = (bank & PM_GPIO_PULL_MASK) >> PM_GPIO_PULL_SHIFT;
+				break;
+			case 3:
+				out_str = (bank & PM_GPIO_OUT_STRENGTH_MASK) >>PM_GPIO_OUT_STRENGTH_SHIFT;
+				disable = (bank & 0x01);					
+				break;
+			case 4:
+				
+				function = (bank & PM_GPIO_FUNC_MASK)>>PM_GPIO_FUNC_SHIFT;
+				break;
+			case 5:
+				if (bank & PM_GPIO_NON_INT_POL_INV)
+					inv_int_pol= 0;
+				else
+					inv_int_pol= 1;
+				break;
+			default:
+				break;
+		}				
+	}
+	/* } Terry Cheng, 20111026, fine tune PMIC 8921 debugfs output data */		
+
+
+	printk("PMIC GPIO: pmic_gpio_num %d,  dir = %d, out_buff = %d , out_val =%d, pull = %d, vin = %d, out_str = %d, func = %d, inv = %d, dis = %d\n"
+			, pmic_gpio_num, mode, out_buff, out_val, pull, vin, out_str, function, inv_int_pol, disable);  
+	//Pack
+	*val = ((pmic_gpio_num <<17)|mode |(out_buff<<2)|(out_val<<3)|(pull<<4)|(vin<<7)
+			|(out_str<<10)|(function<<12)
+			|(inv_int_pol<<15)| (disable << 16));
+	return 0;
+}
+//Value
+static int pmic_gpio_value_get(void *data, u64 *val)
+{
+	u8  mode, state; //mode,bank;
+	unsigned int gpio = pmic_gpio_num;
+
+	struct pm_gpio_chip *pm_gpio_chip = NULL;
+	struct gpio_chip *gpio_chip = NULL;
+
+	//20120418, Terry Cheng, Fix get wrong pm_gpio_chip +
+	mutex_lock(&pm_gpio_chips_lock);
+	list_for_each_entry(pm_gpio_chip, &pm_gpio_chips, link) {
+		if(pm_gpio_chip)
+		{
+		gpio_chip = &pm_gpio_chip->gpio_chip;
+			break;
+		}
+	}
+	mutex_unlock(&pm_gpio_chips_lock);
+
+	if(!pm_gpio_chip)
+	{
+		pr_err("Cannot find PMIC GPIO chip\n");
+		return 1;
+	}	
+	//20120418, Terry Cheng, Fix get wrong pm_gpio_chip -
+	mode = (pm_gpio_chip->bank1[gpio] & PM_GPIO_MODE_MASK) >> PM_GPIO_MODE_SHIFT;
+	state = pm_gpio_get(pm_gpio_chip, pmic_gpio_num);
+
+	printk("pmic_gpio_value_get = %d\n", state);
+	*val = state;
+
+	return 0;
+}
+static int pmic_gpio_value_set(void *data, u64 val)
+{
+
+	struct pm_gpio_chip *pm_gpio_chip = NULL;
+	struct gpio_chip *gpio_chip = NULL;
+
+	//20120418, Terry Cheng, Fix get wrong pm_gpio_chip +
+	mutex_lock(&pm_gpio_chips_lock);
+	list_for_each_entry(pm_gpio_chip, &pm_gpio_chips, link) {
+		if(pm_gpio_chip)
+		{
+		gpio_chip = &pm_gpio_chip->gpio_chip;
+			break;
+		}
+	}
+	mutex_unlock(&pm_gpio_chips_lock);
+
+	if(!pm_gpio_chip)
+	{
+		pr_err("Cannot find PMIC GPIO chip\n");
+		return 1;
+	}	
+	//20120418, Terry Cheng, Fix get wrong pm_gpio_chip -
+	pm_gpio_write(gpio_chip, pmic_gpio_num, (int)val);
+	printk("pmic gpio_value_set = %d\n", (int)val);
+
+	return 0;
+}
+
+//Results
+static int pmic_gpio_results_get(void *data, u64 *val)
+{
+	unsigned int result = pmic_gpio_debugfs_results;
+	pmic_gpio_debugfs_results = 0;
+	if (result)
+		*val = 1;
+	else
+		*val = 0;
+
+	return 0;
+}
+
+static int pmic_gpio_results_set(void *data, u64 val)
+{
+	return 0;
+}
+//GPIO number
+static int pmic_gpio_num_get(void *data, u64 *val)
+{
+	*val = (u64)pmic_gpio_num;
+	return 0;
+}
+
+static int pmic_gpio_num_set(void *data, u64 val)
+{
+	pmic_gpio_num = (unsigned int)val;
+	printk("pmic_gpio_num = %d\n", pmic_gpio_num);
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(gpio_config_fops, pmic_gpio_config_get,
+						pmic_gpio_config_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(gpio_value_fops, pmic_gpio_value_get,
+						pmic_gpio_value_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(gpio_results_fops, pmic_gpio_results_get,
+						pmic_gpio_results_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(gpio_num_fops, pmic_gpio_num_get,
+						pmic_gpio_num_set, "%llu\n");
+
+static int __init pmic_gpio_debug_init(void)
+{
+	struct dentry *dent;
+	dent = debugfs_create_dir("pmic_gpio", 0);
+	if (IS_ERR(dent))
+		return 0;
+
+	//Create debugfs file
+	debugfs_create_file("config", 0644, dent, 0, &gpio_config_fops);
+	debugfs_create_file("value", 0644, dent, 0, &gpio_value_fops);
+	debugfs_create_file("results", 0644, dent, 0, &gpio_results_fops);
+	debugfs_create_file("num", 0644, dent, 0, &gpio_num_fops);
+
+	return 0;
+}
+device_initcall(pmic_gpio_debug_init);
+#endif	//CONFIG_DEBUG_FS
+/* }Terry cheng, 20110829, Implement GPIO debug fs  */
+
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("PMIC GPIO driver");

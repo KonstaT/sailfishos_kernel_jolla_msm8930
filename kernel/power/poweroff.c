@@ -19,7 +19,10 @@
 
 static void do_poweroff(struct work_struct *dummy)
 {
-	kernel_power_off();
+	//Terry, Add power off reason +
+	//kernel_power_off();
+	kernel_power_off("Sys-Rq o");
+	//Terry, Add power off reason -
 }
 
 static DECLARE_WORK(poweroff_work, do_poweroff);

@@ -43,6 +43,25 @@ struct tag_mem32 {
 	__u32	start;	/* physical start address */
 };
 
+/* Bright Lee, 20120517, reserved memory for lastlog { */
+#ifdef CONFIG_PANIC_LASTLOG
+#define ATAG_MEM_LASTLOG 0x54420002
+#endif
+/* } Bright Lee, 20120517 */
+
+/* okpa, 20111227, save aboot log { */
+#ifdef CONFIG_ABOOT_LOG
+#define ATAG_MEM_ABOOT_LOG 0x54420003
+#endif
+/* } okpa, 20111227 */
+
+
+/* Bright Lee, 20130507, flush smem erro to reserved memory { */
+#ifdef CONFIG_BUILD_FACTORY
+#define ATAG_MEM_SMEM_LOG 0x54420004
+#endif
+/* } Bright Lee, 20130507 */
+
 /* VGA text type displays */
 #define ATAG_VIDEOTEXT	0x54410003
 

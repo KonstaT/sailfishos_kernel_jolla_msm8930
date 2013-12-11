@@ -21,6 +21,12 @@ config FB_MSM_BACKLIGHT
 	---help---
 	  Say Y here if you want to control the backlight of your display.
 
+config FB_MSM_BACKLIGHT_LCMPWM
+	bool "Support for backlight control using PWM from LCDM"
+	default n
+	---help---
+	  Say Y here if you want to control the backlight PWM signal using your LCM driver IC.
+
 config FB_MSM_LOGO
 	bool "MSM Frame Buffer Logo"
 	default n
@@ -211,6 +217,16 @@ config FB_MSM_MIPI_DSI_NT35516
 	bool
 	select FB_MSM_MIPI_DSI
 
+config FB_MSM_MIPI_DSI_TRULY_OTM9608A
+        bool
+        select FB_MSM_MIPI_DSI
+        default n
+
+config FB_MSM_MIPI_DSI_TRUST_NT35516
+        bool
+        select FB_MSM_MIPI_DSI
+        default n
+
 config FB_MSM_MIPI_DSI_TC358764_DSI2LVDS
 	bool
 	select FB_MSM_MIPI_DSI
@@ -355,6 +371,26 @@ config FB_MSM_MIPI_RENESAS_VIDEO_FWVGA_PT
 config FB_MSM_MIPI_RENESAS_CMD_FWVGA_PT
 	bool
 	select FB_MSM_MIPI_DSI_RENESAS
+	default n
+
+config FB_MSM_MIPI_TRULY_OTM9608A_VIDEO_QHD
+	bool
+	select FB_MSM_MIPI_DSI_TRULY_OTM9608A
+	default n
+
+config FB_MSM_MIPI_TRULY_OTM9608A_CMD_QHD
+	bool
+	select FB_MSM_MIPI_DSI_TRULY_OTM9608A
+	default n
+
+config FB_MSM_MIPI_TRUST_NT35516_VIDEO_QHD
+	bool
+	select FB_MSM_MIPI_DSI_TRUST_NT35516
+	default n
+
+config FB_MSM_MIPI_TRUST_NT35516_CMD_QHD
+	bool
+	select FB_MSM_MIPI_DSI_TRUST_NT35516
 	default n
 
 config FB_MSM_MIPI_NT35510_VIDEO_WVGA_PT
@@ -557,6 +593,10 @@ config FB_MSM_MIPI_PANEL_DETECT
 	select FB_MSM_MIPI_SIMULATOR_VIDEO
 	select FB_MSM_MIPI_CHIMEI_WXGA
 	select FB_MSM_MIPI_CHIMEI_WUXGA
+	select FB_MSM_MIPI_TRULY_OTM9608A_VIDEO_QHD
+	select FB_MSM_MIPI_TRULY_OTM9608A_CMD_QHD
+	select FB_MSM_MIPI_TRUST_NT35516_VIDEO_QHD
+	select FB_MSM_MIPI_TRUST_NT35516_CMD_QHD
 	---help---
 	  Support for MIPI panel auto detect
 
@@ -595,6 +635,10 @@ config FB_MSM_LCDC_MIPI_PANEL_AUTO_DETECT
 	select FB_MSM_MIPI_NT35516_VIDEO_QHD_PT
 	select FM_MSM_MIPI_NT35516_CMD_QHD_PT
 	select FB_MSM_MIPI_SIMULATOR_VIDEO
+	select FB_MSM_MIPI_TRULY_OTM9608A_VIDEO_QHD
+	select FB_MSM_MIPI_TRULY_OTM9608A_CMD_QHD
+	select FB_MSM_MIPI_TRUST_NT35516_VIDEO_QHD
+	select FB_MSM_MIPI_TRUST_NT35516_CMD_QHD
 	---help---
 	  Support for LCDC + MIPI panel auto detect
 
@@ -617,6 +661,10 @@ config FB_MSM_LVDS_MIPI_PANEL_DETECT
 	select FB_MSM_MIPI_SIMULATOR_VIDEO
 	select FB_MSM_MIPI_CHIMEI_WXGA
 	select FB_MSM_MIPI_CHIMEI_WUXGA
+	select FB_MSM_MIPI_TRULY_OTM9608A_VIDEO_QHD
+	select FB_MSM_MIPI_TRULY_OTM9608A_CMD_QHD
+	select FB_MSM_MIPI_TRUST_NT35516_VIDEO_QHD
+	select FB_MSM_MIPI_TRUST_NT35516_CMD_QHD
 	---help---
 	  Support for LVDS + MIPI panel auto detect
 
@@ -677,6 +725,22 @@ config FB_MSM_MIPI_ORISE_VIDEO_720P_PT_PANEL
 config FB_MSM_MIPI_ORISE_CMD_720P_PT_PANEL
 	bool "MIPI ORISE CMD 720P PT Panel"
 	select FB_MSM_MIPI_ORISE_CMD_720P_PT
+
+config FB_MSM_MIPI_TRULY_OTM9608A_VIDEO_QHD_PANEL
+	bool "MIPI TRULY_OTM9608A VIDEO QHD Panel"
+	select FB_MSM_MIPI_TRULY_OTM9608A_VIDEO_QHD
+
+config FB_MSM_MIPI_TRULY_OTM9608A_CMD_QHD_PANEL
+	bool "MIPI TRULY_OTM9608A CMD QHD Panel"
+	select FB_MSM_MIPI_TRULY_OTM9608A_CMD_QHD
+
+config FB_MSM_MIPI_TRUST_NT35516_VIDEO_QHD_PANEL
+	bool "MIPI TRUST_NT35516 VIDEO QHD Panel"
+	select FB_MSM_MIPI_TRUST_NT35516_VIDEO_QHD
+
+config FB_MSM_MIPI_TRUST_NT35516_CMD_QHD_PANEL
+	bool "MIPI TRUST_NT35516 CMD QHD Panel"
+	select FB_MSM_MIPI_TRUST_NT35516_CMD_QHD
 
 config FB_MSM_MIPI_RENESAS_VIDEO_FWVGA_PT_PANEL
 	bool "MIPI Renesas Video FWVGA PT Panel"

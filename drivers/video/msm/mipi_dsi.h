@@ -367,6 +367,7 @@ void mipi_dsi_phy_ctrl(int on)
 #endif
 
 void cont_splash_clk_ctrl(int enable);
+void mipi_dsi_clk_ctrl_4probe(int enable, int esc_byte_ratio_probe);
 void mipi_dsi_turn_on_clks(void);
 void mipi_dsi_turn_off_clks(void);
 void mipi_dsi_clk_cfg(int on);
@@ -379,5 +380,8 @@ void mipi_dsi_cmd_mdp_busy(void);
 #ifdef CONFIG_FB_MSM_MDP303
 void update_lane_config(struct msm_panel_info *pinfo);
 #endif
+
+extern unsigned int LCD_LOGLEVEL_DLL;
+#define LCD_PRINTK(level, fmt, args...) if (level <= LCD_LOGLEVEL_DLL) printk(fmt, ##args);
 
 #endif /* MIPI_DSI_H */

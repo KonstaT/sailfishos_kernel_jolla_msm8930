@@ -71,3 +71,29 @@ obj-$(CONFIG_MSM_MEMORY_LOW_POWER_MODE_SUSPEND_DEEP_POWER_DOWN) \
 obj-$(CONFIG_PMIC8058_XOADC) += pmic8058-xoadc.o
 obj-$(CONFIG_QSEECOM) += qseecom.o
 obj-$(CONFIG_QFP_FUSE) += qfp_fuse.o
+
+# WH Lee+
+EXTRA_CFLAGS += -DBMM_USE_BASIC_I2C_FUNC
+
+# Don Lin+
+obj-$(CONFIG_SENSORS_APDS9930)	+= apds9930.o
+obj-$(CONFIG_SENSORS_BMA2X2)    += bma2x2_driver.o
+# Don Lin-
+obj-$(CONFIG_SENSORS_BMA250)    += bma250_driver.o
+obj-$(CONFIG_SENSORS_BMM050)    += bmm050_driver.o bmm050.o
+obj-$(CONFIG_SENSORS_BMG160)    += bmg160_driver.o bmg160.o
+obj-$(CONFIG_SENSORS_L3GD20)    += l3gd20_gyr.o
+obj-$(CONFIG_SENSORS_TSL2772)	+= tsl277x.o
+# WH Lee-
+
+obj-$(CONFIG_FTD_MISC_ITEM) += ftd_misc.o
+# Bright Lee, 20120517, save last log when panic { 
+obj-$(CONFIG_PANIC_LASTLOG) += lastlog.o
+$(obj)/lastlog.o: KBUILD_CFLAGS += -DOEM_BUILD_VERSION=\"$(OEM_MAIN_VERSION)-$(BUILD_NUMBER_OEM)\"
+# } Bright Lee, 20120517
+# RK Chen, 20121220, reset module to reset the chip, {
+# obj-$(CONFIG_RESET_MODULE) += reset/
+# } RK Chen, 20121220
+# okpa, 20111227, save aboot log {
+obj-$(CONFIG_ABOOT_LOG) += aboot_log.o
+# } okpa, 20111227

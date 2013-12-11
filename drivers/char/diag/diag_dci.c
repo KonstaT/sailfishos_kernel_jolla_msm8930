@@ -63,15 +63,15 @@ static void diag_smd_dci_send_req(int proc_num)
 	}
 	if (buf && r > 0) {
 		smd_read(smd_ch, buf, r);
-		pr_debug("diag: data received ---\n");
+		diag_printk(1,"diag:%s data received ---\n",__func__);
 		for (i = 0; i < r; i++)
-			pr_debug("\t %x \t", *(((unsigned char *)buf)+i));
+			diag_printk(1,"\t %x \t", *(((unsigned char *)buf)+i));
 
 		if (*(uint8_t *)(buf+4) != DCI_CMD_CODE)
 			cmd_code_len = 4; /* delayed response */
 		driver->write_ptr_dci->length =
 			 (int)(*(uint16_t *)(buf+2)) - (4+cmd_code_len);
-		pr_debug("diag: len = %d\n", (int)(*(uint16_t *)(buf+2))
+		diag_printk(1,"diag:%s len = %d\n",__func__, (int)(*(uint16_t *)(buf+2))
 							 - (4+cmd_code_len));
 		/* look up DCI client with tag */
 		for (i = 0; i < dci_max_reg; i++) {
@@ -83,14 +83,14 @@ static void diag_smd_dci_send_req(int proc_num)
 		}
 		if (found)
 			pr_alert("diag: No matching PID for DCI data\n");
-		pr_debug("\n diag PID = %d", driver->dci_tbl[i].pid);
+		diag_printk(1,"\n diag:%s  PID = %d",__func__, driver->dci_tbl[i].pid);
 		if (driver->dci_tbl[i].pid == 0)
 			pr_alert("diag: Receiving DCI process deleted\n");
 		*(int *)(buf+4+cmd_code_len) = driver->dci_tbl[i].uid;
 		/* update len after adding UID */
 		driver->write_ptr_dci->length =
 			driver->write_ptr_dci->length + 4;
-		pr_debug("diag: data receivd, wake process\n");
+		diag_printk(1,"diag:%s data receivd, wake process\n",__func__);
 		driver->in_busy_dci = 1;
 		diag_update_sleeping_process(driver->dci_tbl[i].pid,
 							DCI_DATA_TYPE);
@@ -99,10 +99,10 @@ static void diag_smd_dci_send_req(int proc_num)
 			driver->dci_tbl[i].pid = 0;
 		for (i = 0; i < dci_max_reg; i++)
 			if (driver->dci_tbl[i].pid != 0)
-				pr_debug("diag: PID = %d, UID = %d, tag = %d\n",
-				driver->dci_tbl[i].pid, driver->dci_tbl[i].uid,
+				diag_printk(1,"diag:%s PID = %d, UID = %d, tag = %d\n",
+				__func__,driver->dci_tbl[i].pid, driver->dci_tbl[i].uid,
 				 driver->dci_tbl[i].tag);
-		pr_debug("diag: completed clearing table\n");
+		diag_printk(1,"diag:%s completed clearing table\n",__func__);
 	}
 }
 
@@ -123,7 +123,7 @@ void diag_dci_notify_client(int peripheral_mask)
 	/* Notify the DCI process that the peripheral DCI Channel is up */
 	for (i = 0; i < MAX_DCI_CLIENT; i++) {
 		if (driver->dci_notify_tbl[i].list & peripheral_mask) {
-			pr_debug("diag: sending signal now\n");
+			diag_printk(1,"diag:%s sending signal now\n",__func__);
 			stat = send_sig(driver->dci_notify_tbl[i].signal_type,
 					 driver->dci_notify_tbl[i].client, 0);
 			if (stat)
@@ -235,7 +235,7 @@ int diag_process_dci_client(unsigned char *buf, int len)
 	temp++;
 	subsys_cmd_code = *(uint16_t *)temp;
 	temp += 2;
-	pr_debug("diag: %d %d %d", cmd_code, subsys_id, subsys_cmd_code);
+	diag_printk(1,"diag:%s %d %d %d",__func__, cmd_code, subsys_id, subsys_cmd_code);
 	for (i = 0; i < diag_max_reg; i++) {
 		entry = driver->table[i];
 		if (entry.process_id != NO_PROCESS) {

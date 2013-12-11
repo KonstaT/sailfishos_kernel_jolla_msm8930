@@ -42,6 +42,16 @@ else
 TARGET_PREBUILT_KERNEL := $(TARGET_PREBUILT_INT_KERNEL)
 endif
 
+# QISDA Bright Lee, 20111103, inject global include header in oem folder, 20120518 Terry Add include qmi folder{
+SHOW_COMMANDS := $(filter showcommands,$(MAKECMDGOALS))
+ifneq ($(strip $(SHOW_COMMANDS)),)
+VERBOSE := V=1
+else
+VERBOSE := V=0
+endif
+QINCLUDE := EXTRAINCLUDE=$(OEM_SCRIPTS_ROOT)/../oem/oem_rapi:$(OEM_SCRIPTS_ROOT)/../../oem/proc_comm:/oem/proc_comm:$(OEM_SCRIPTS_ROOT)/../../oem/header_comm:$(OEM_SCRIPTS_ROOT)/../../oem/qmi
+# } QISDA Bright Lee, 20111103, 20120518 Terry Add include qmi folder
+
 define mv-modules
 mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.dep`;\
 if [ "$$mdpath" != "" ];then\
@@ -68,11 +78,17 @@ $(KERNEL_OUT)/piggy : $(TARGET_PREBUILT_INT_KERNEL)
 	$(hide) gunzip -c $(KERNEL_OUT)/arch/arm/boot/compressed/piggy.gzip > $(KERNEL_OUT)/piggy
 
 $(TARGET_PREBUILT_INT_KERNEL): $(KERNEL_OUT) $(KERNEL_CONFIG) $(KERNEL_HEADERS_INSTALL)
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi-
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi- modules
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) INSTALL_MOD_PATH=../../$(KERNEL_MODULES_INSTALL) INSTALL_MOD_STRIP=1 ARCH=arm CROSS_COMPILE=arm-eabi- modules_install
+	# QISDA Bright Lee, 20111103, inject global include header in oem folder {
+	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi- $(VERBOSE) $(QINCLUDE)
+	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi- $(VERBOSE) $(QINCLUDE) modules
+	# } QISDA Bright Lee, 20111103 
+	$(MAKE) -C kernel O=../$(KERNEL_OUT) INSTALL_MOD_PATH=../../$(KERNEL_MODULES_INSTALL) INSTALL_MOD_STRIP=1 ARCH=arm CROSS_COMPILE=arm-eabi- $(VERBOSE) modules_install
+	# cp $(KERNEL_OUT)/drivers/misc/reset/reset.ko $(ANDROID_PRODUCT_OUT)/system/lib/modules/reset.ko
 	$(mv-modules)
 	$(clean-module-folder)
+	# Bright Lee, 20120413, backup vmlinux for ramdump debug {
+	bzip2 -c $(KERNEL_OUT)/vmlinux > $(ANDROID_PRODUCT_OUT)/vmlinux.bz2
+	# } Bright Lee, 20120413
 	$(append-dtb)
 
 $(KERNEL_HEADERS_INSTALL): $(KERNEL_OUT) $(KERNEL_CONFIG)

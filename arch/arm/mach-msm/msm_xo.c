@@ -148,6 +148,43 @@ static void msm_xo_dump_xo(struct seq_file *m, struct msm_xo *xo,
 				voter->name,
 				msm_xo_mode_to_str[voter->mode]);
 }
+/* Terry Cheng, 20121128, Add dump xo voter information when suspend {*/
+static void msm_xo_dump_xo_print(struct msm_xo *xo,
+		const char *name)
+{
+	struct msm_xo_voter *voter;
+
+	pr_info("%-20s%s\n", name, msm_xo_mode_to_str[xo->mode]);
+	list_for_each_entry(voter, &xo->voters, list)
+		pr_info(" %s %-16s %s\n",
+				xo->mode == voter->mode ? "*" : " ",
+				voter->name,
+				msm_xo_mode_to_str[voter->mode]);
+}
+void debug_dump_xo_status(void)
+{
+	struct msm_xo_voter *voter;
+	struct msm_xo *core_xo;
+
+	core_xo = &msm_xo_sources[MSM_XO_CORE];
+
+	list_for_each_entry(voter, &core_xo->voters, list)
+		if (voter->mode != MSM_XO_MODE_OFF)
+			goto dump_status;
+
+	return;
+dump_status:
+	msm_xo_dump_xo_print(&msm_xo_sources[MSM_XO_TCXO_D0], "TCXO D0");
+	msm_xo_dump_xo_print(&msm_xo_sources[MSM_XO_TCXO_D1], "TCXO D1");
+	msm_xo_dump_xo_print(&msm_xo_sources[MSM_XO_TCXO_A0], "TCXO A0");
+	msm_xo_dump_xo_print(&msm_xo_sources[MSM_XO_TCXO_A1], "TCXO A1");
+	msm_xo_dump_xo_print(&msm_xo_sources[MSM_XO_TCXO_A2], "TCXO A2");
+	msm_xo_dump_xo_print(&msm_xo_sources[MSM_XO_CORE], "TCXO Core");
+
+}
+EXPORT_SYMBOL(debug_dump_xo_status);
+/* } Terry Cheng, 20121128, Add dump voter xo information when suspend */
+
 
 static int msm_xo_show_voters(struct seq_file *m, void *v)
 {

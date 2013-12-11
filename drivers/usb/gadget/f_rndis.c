@@ -25,6 +25,8 @@
 #include "u_ether.h"
 #include "rndis.h"
 
+
+#define frndis_printk(level,fmt,args...) if (level <= RNDIS_DLL) printk(fmt,##args);
 static bool rndis_multipacket_dl_disable;
 module_param(rndis_multipacket_dl_disable, bool, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(rndis_multipacket_dl_disable,
@@ -479,7 +481,7 @@ static void rndis_command_complete(struct usb_ep *ep, struct usb_request *req)
 			rndis->port.multi_pkt_xfer = 1;
 		else
 			rndis->port.multi_pkt_xfer = 0;
-		DBG(cdev, "%s: MaxTransferSize: %d : Multi_pkt_txr: %s\n",
+		frndis_printk(1, "frndis::%s: MaxTransferSize: %d : Multi_pkt_txr: %s\n",
 				__func__, buf->MaxTransferSize,
 				rndis->port.multi_pkt_xfer ? "enabled" :
 							    "disabled");
@@ -573,11 +575,11 @@ static int rndis_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 
 	if (intf == rndis->ctrl_id) {
 		if (rndis->notify->driver_data) {
-			VDBG(cdev, "reset rndis control %d\n", intf);
+			frndis_printk(0,"frndis:: %s rest rndis control %d\n",__func__,intf);
 			usb_ep_disable(rndis->notify);
 		}
 		if (!rndis->notify->desc) {
-			VDBG(cdev, "init rndis ctrl %d\n", intf);
+			frndis_printk(0, "frndis:: %s init rndis ctrl %d\n",__func__,intf);
 			if (config_ep_by_speed(cdev->gadget, f, rndis->notify))
 				goto fail;
 		}
@@ -588,12 +590,12 @@ static int rndis_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		struct net_device	*net;
 
 		if (rndis->port.in_ep->driver_data) {
-			DBG(cdev, "reset rndis\n");
+			frndis_printk(1, "frndis:: %s reset rndis control\n",__func__);
 			gether_disconnect(&rndis->port);
 		}
 
 		if (!rndis->port.in_ep->desc || !rndis->port.out_ep->desc) {
-			DBG(cdev, "init rndis\n");
+			frndis_printk(1,"frndis:: %s init rndis control\n",__func__);
 			if (config_ep_by_speed(cdev->gadget, f,
 					       rndis->port.in_ep) ||
 			    config_ep_by_speed(cdev->gadget, f,
@@ -667,7 +669,7 @@ static void rndis_open(struct gether *geth)
 	struct f_rndis		*rndis = func_to_rndis(&geth->func);
 	struct usb_composite_dev *cdev = geth->func.config->cdev;
 
-	DBG(cdev, "%s\n", __func__);
+	frndis_printk(0,"frndis::%s\n",__func__);
 
 	rndis_set_param_medium(rndis->config, NDIS_MEDIUM_802_3,
 				bitrate(cdev->gadget) / 100);
@@ -678,7 +680,7 @@ static void rndis_close(struct gether *geth)
 {
 	struct f_rndis		*rndis = func_to_rndis(&geth->func);
 
-	DBG(geth->func.config->cdev, "%s\n", __func__);
+	frndis_printk(0,"frndis::%s\n",__func__);
 
 	rndis_set_param_medium(rndis->config, NDIS_MEDIUM_802_3, 0);
 	rndis_signal_disconnect(rndis->config);

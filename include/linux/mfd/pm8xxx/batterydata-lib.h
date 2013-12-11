@@ -18,10 +18,10 @@
 #define FCC_CC_COLS		5
 #define FCC_TEMP_COLS		8
 
-#define PC_CC_ROWS             29
+#define PC_CC_ROWS             30 //Carl Chang, for SBJ 29 -> 30
 #define PC_CC_COLS             13
 
-#define PC_TEMP_ROWS		29
+#define PC_TEMP_ROWS		31 //Carl Chang, for SBJ 29 -> 31
 #define PC_TEMP_COLS		8
 
 #define MAX_SINGLE_LUT_COLS	20
@@ -73,6 +73,10 @@ enum battery_type {
 	BATT_UNKNOWN = 0,
 	BATT_PALLADIUM,
 	BATT_DESAY,
+	BATT_BOSTON,
+	//Carl Chang+, add SBJ battery data
+	BATT_SBJ,
+	//Carl Chang-
 };
 
 /**
@@ -95,6 +99,7 @@ struct bms_battery_data {
 	struct single_row_lut	*fcc_temp_lut;
 	struct single_row_lut	*fcc_sf_lut;
 	struct pc_temp_ocv_lut	*pc_temp_ocv_lut;
+	struct pc_temp_ocv_lut  *soc_temp_ocv_lut;  //Carl Chang
 	struct sf_lut		*pc_sf_lut;
 	struct sf_lut		*rbatt_sf_lut;
 	int			default_rbatt_mohm;
@@ -105,6 +110,10 @@ struct bms_battery_data {
 	defined(CONFIG_PM8921_BMS_MODULE)
 extern struct bms_battery_data  palladium_1500_data;
 extern struct bms_battery_data  desay_5200_data;
+extern struct bms_battery_data  boston_2000_data;
+//Carl Chang+, add SBJ battery data
+extern struct bms_battery_data  sbj_2100_data;
+//Carl Chang-
 
 int interpolate_fcc(struct single_row_lut *fcc_temp_lut, int batt_temp);
 int interpolate_scalingfactor(struct sf_lut *sf_lut, int row_entry, int pc);
@@ -114,6 +123,10 @@ int interpolate_pc(struct pc_temp_ocv_lut *pc_temp_ocv,
 				int batt_temp_degc, int ocv);
 int interpolate_ocv(struct pc_temp_ocv_lut *pc_temp_ocv,
 				int batt_temp_degc, int pc);
+//Carl Chang+
+int interpolate_soc(struct pc_temp_ocv_lut *soc_temp_ocv_lut,
+				int batt_temp_degc, int ocv);
+//Carl Chang-
 int linear_interpolate(int y0, int x0, int y1, int x1, int x);
 int is_between(int left, int right, int value);
 #else
@@ -142,6 +155,13 @@ static inline int interpolate_ocv(struct pc_temp_ocv_lut *pc_temp_ocv,
 {
 	return -EINVAL;
 }
+//Carl Chang+
+static int interpolate_soc(struct pc_temp_ocv_lut *soc_temp_ocv_lut,
+				int batt_temp_degc, int ocv)
+{
+	return -EINVAL;
+}
+//Carl Chang-
 static inline int linear_interpolate(int y0, int x0, int y1, int x1, int x)
 {
 	return -EINVAL;

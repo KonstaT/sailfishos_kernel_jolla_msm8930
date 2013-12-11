@@ -43,6 +43,12 @@
 #include <linux/idr.h>
 
 #include "workqueue_sched.h"
+/* Bright Lee, 20120412, work queue work history { */
+#ifdef CONFIG_WORKQUEUE_HISTORY
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
+#endif
+/* } Bright Lee, 20120412 */
 
 enum {
 	/* global_cwq flags */
@@ -137,6 +143,16 @@ struct worker {
 	unsigned int		flags;		/* X: flags */
 	int			id;		/* I: worker id */
 	struct work_struct	rebind_work;	/* L: rebind worker to cpu */
+	/* Bright Lee, 20120412, work queue work history { */
+	#ifdef CONFIG_WORKQUEUE_HISTORY
+	struct list_head	sibling;
+	unsigned int		last_work_idx;
+#define LAST_WORK_LOG_NUM 16
+#define LAST_WORK_LOG_MASK 0xF
+	unsigned long		last_work_func[LAST_WORK_LOG_NUM];
+	unsigned long		last_work_time_spent[LAST_WORK_LOG_NUM];
+	#endif
+	/* } Bright Lee, 20120412 */
 };
 
 /*
@@ -167,6 +183,12 @@ struct global_cwq {
 	unsigned int		trustee_state;	/* L: trustee state */
 	wait_queue_head_t	trustee_wait;	/* trustee wait */
 	struct worker		*first_idle;	/* L: first idle worker */
+	/* Bright Lee, 20120412, work queue work history { */
+	#ifdef CONFIG_WORKQUEUE_HISTORY
+	struct list_head	worker_list;
+	#endif
+	/* } Bright Lee, 20120412 */
+
 } ____cacheline_aligned_in_smp;
 
 /*
@@ -1366,6 +1388,16 @@ static struct worker *create_worker(struct global_cwq *gcwq, bool bind)
 	if (!worker)
 		goto fail;
 
+	/* Bright Lee, 20120412, work queue work history { */
+	#ifdef CONFIG_WORKQUEUE_HISTORY
+	spin_lock_irq(&gcwq->lock);
+	list_add(&worker->sibling, &gcwq->worker_list);
+	spin_unlock_irq(&gcwq->lock);
+	worker->last_work_idx = 0;
+	memset (worker->last_work_func, 0, sizeof(worker->last_work_func));
+	#endif
+	/* } Bright Lee, 20120412 */
+
 	worker->gcwq = gcwq;
 	worker->id = id;
 
@@ -1446,6 +1478,12 @@ static void destroy_worker(struct worker *worker)
 
 	list_del_init(&worker->entry);
 	worker->flags |= WORKER_DIE;
+
+	/* Bright Lee, 20120412, work queue work history { */
+	#ifdef CONFIG_WORKQUEUE_HISTORY
+	list_del_init(&worker->sibling);
+	#endif
+	/* } Bright Lee, 20120412 */
 
 	spin_unlock_irq(&gcwq->lock);
 
@@ -1801,6 +1839,11 @@ __acquires(&gcwq->lock)
 	bool cpu_intensive = cwq->wq->flags & WQ_CPU_INTENSIVE;
 	work_func_t f = work->func;
 	int work_color;
+	/* Bright Lee, 20120412, work queue work history { */
+	#ifdef CONFIG_WORKQUEUE_HISTORY
+	unsigned long work_start_time;
+	#endif
+	/* } Bright Lee, 20120412 */
 	struct worker *collision;
 #ifdef CONFIG_LOCKDEP
 	/*
@@ -1863,7 +1906,19 @@ __acquires(&gcwq->lock)
 	lock_map_acquire_read(&cwq->wq->lockdep_map);
 	lock_map_acquire(&lockdep_map);
 	trace_workqueue_execute_start(work);
+	/* Bright Lee, 20120412, work queue work history { */
+	#ifdef CONFIG_WORKQUEUE_HISTORY
+	worker->last_work_func[(worker->last_work_idx)&LAST_WORK_LOG_MASK] = (unsigned long)f;
+	worker->last_work_time_spent[(worker->last_work_idx)&LAST_WORK_LOG_MASK] = 0xFFFFFFFF;
+	work_start_time = jiffies;
+	#endif
+	/* } Bright Lee, 20120412 */
 	f(work);
+	/* Bright Lee, 20120412, work queue work history { */
+	#ifdef CONFIG_WORKQUEUE_HISTORY
+	worker->last_work_time_spent[(worker->last_work_idx++)&LAST_WORK_LOG_MASK] = jiffies - work_start_time;
+	#endif
+	/* } Bright Lee, 20120412 */
 	/*
 	 * While we must be careful to not use "work" after this, the trace
 	 * point will only record its address.
@@ -3785,6 +3840,12 @@ static int __init init_workqueues(void)
 		for (i = 0; i < BUSY_WORKER_HASH_SIZE; i++)
 			INIT_HLIST_HEAD(&gcwq->busy_hash[i]);
 
+		/* Bright Lee, 20120412, work queue work history { */
+		#ifdef CONFIG_WORKQUEUE_HISTORY
+		INIT_LIST_HEAD(&gcwq->worker_list);
+		#endif
+		/* } Bright Lee, 20120412 */
+
 		init_timer_deferrable(&gcwq->idle_timer);
 		gcwq->idle_timer.function = idle_worker_timeout;
 		gcwq->idle_timer.data = (unsigned long)gcwq;
@@ -3827,3 +3888,61 @@ static int __init init_workqueues(void)
 	return 0;
 }
 early_initcall(init_workqueues);
+
+
+/* Bright Lee, 20120412, work queue work history { */
+#ifdef CONFIG_WORKQUEUE_HISTORY
+static int workqueue_debug_show(struct seq_file *s, void *unused)
+{
+	unsigned int cpu;
+	int i;
+
+	for_each_gcwq_cpu(cpu) {
+		struct global_cwq *gcwq = get_gcwq(cpu);
+		struct worker *tworker;
+
+		list_for_each_entry_reverse(tworker, &gcwq->worker_list, sibling) {
+			unsigned long func;
+			char ksym_name[KSYM_NAME_LEN];
+
+			spin_lock_irq(&gcwq->lock);
+			seq_printf (s, "%s: last_active: %ld ", tworker->task->comm, tworker->last_active);
+			for (i = LAST_WORK_LOG_NUM; i > 0; i --) {
+				func = tworker->last_work_func[(tworker->last_work_idx+i) & LAST_WORK_LOG_MASK];
+				if (func) {
+					if (!kallsyms_lookup (func, NULL, NULL, NULL, ksym_name)) {
+						sprintf(ksym_name, "0x%lx", (unsigned long)func);
+					}
+					seq_printf (s, "%s(%lu) ", ksym_name, tworker->last_work_time_spent[(tworker->last_work_idx+i) & LAST_WORK_LOG_MASK]);
+				}
+			}
+			seq_printf (s, "\n");
+			spin_unlock_irq(&gcwq->lock);
+		}
+	}
+	return 0;
+}
+
+static int workqueue_debug_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, workqueue_debug_show, NULL);
+}
+
+static const struct file_operations workqueue_debug_operations = {
+        .open           = workqueue_debug_open,
+	.read           = seq_read,
+	.llseek         = seq_lseek,
+	.release        = single_release,
+};
+
+static __init int workqueue_debug_init(void)
+{
+        (void) debugfs_create_file("workqueues", S_IFREG | S_IRUGO,
+				NULL, NULL, &workqueue_debug_operations);
+
+	return 0;
+}
+late_initcall(workqueue_debug_init);
+#endif
+/* } Bright Lee, 20120412 */
+

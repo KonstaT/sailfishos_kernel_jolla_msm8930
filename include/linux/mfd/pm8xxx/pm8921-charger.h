@@ -196,6 +196,18 @@ enum pm8921_charger_source {
 	PM8921_CHG_SRC_DC,
 };
 
+/* Terry Cheng, 20120117, Add update battery information { */
+struct battery_inform_data {
+	int status;
+	int temp;
+	int health;
+	int capacity;
+	int voltage;
+	int cur;	//Terry Cheng, 20120822, add save current information
+};
+void pmic8921_get_battery_inform_data (struct battery_inform_data *data);
+/* } Terry Cheng, 20120117, Add update battery information */
+
 #if defined(CONFIG_PM8921_CHARGER) || defined(CONFIG_PM8921_CHARGER_MODULE)
 void pm8921_charger_vbus_draw(unsigned int mA);
 int pm8921_charger_register_vbus_sn(void (*callback)(int));

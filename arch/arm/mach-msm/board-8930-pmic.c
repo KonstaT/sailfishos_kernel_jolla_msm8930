@@ -161,6 +161,25 @@ static struct pm8xxx_gpio_init pm8038_gpios[] __initdata = {
 static struct pm8xxx_mpp_init pm8038_mpps[] __initdata = {
 };
 
+/*  Terry Cheng, 20121127, Port Boston EVT0 PMIC 8038 GPIO and MPP config {*/
+static struct pm8xxx_gpio_init pm8038_gpios_boston_evt0[] __initdata = {
+};
+//GPIO configuration with detroit lte NC pin
+static struct pm8xxx_gpio_init pm8038_gpios_boston_evt0_nc_pins[] __initdata = {
+	PM8038_GPIO_DISABLE(1),				 	 /* Disable NC */
+	PM8038_GPIO_DISABLE(2),				 	 /* Disable NC */
+	PM8038_GPIO_DISABLE(5),				 	 /* Disable NC */	
+	PM8038_GPIO_DISABLE(6),				 	 /* Disable NC */
+	PM8038_GPIO_DISABLE(7),				 	 /* Disable NC */
+	PM8038_GPIO_DISABLE(10),				 	 /* Disable NC */
+	PM8038_GPIO_DISABLE(11),				 	 /* Disable NC */
+	PM8038_GPIO_DISABLE(12),				 	 /* Disable NC */
+};
+static struct pm8xxx_mpp_init pm8038_mpps_boston_evt0_nc_pins[] __initdata = {
+	PM8038_MPP_INIT(6, SINK, PM8XXX_MPP_CS_OUT_25MA, CS_CTRL_DISABLE),
+};
+/* } Terry Cheng, 20121127, Port Boston EVT0 PMIC 8038 GPIO and MPP config */
+
 /* GPIO and MPP configurations for MSM8930 + PM8917 targets */
 
 /* Initial PM8917 GPIO configurations */
@@ -206,6 +225,41 @@ void __init msm8930_pm8038_gpio_mpp_init(void)
 			break;
 		}
 	}
+	/*  Terry Cheng, 20121127, Port Boston EVT0 PMIC 8038 GPIO and MPP config {*/
+	printk("system_rev = 0x%x\n", system_rev);
+	if ( msm_project_id >= BOSTON )
+	{
+		if(system_rev >= EVT0){
+			//Boston evt0 pmic 8038 gpio config
+			for (i = 0; i < ARRAY_SIZE(pm8038_gpios_boston_evt0); i++) {
+				rc = pm8xxx_gpio_config(pm8038_gpios_boston_evt0[i].gpio,
+							&pm8038_gpios_boston_evt0[i].config);
+				if (rc) {
+					pr_err("%s at %d: pm8xxx_gpio_config: rc=%d\n", __func__, __LINE__, rc);
+					break;
+				}
+			}
+			//Boston evt0 pmic 8038 gpio NC pin
+			for (i = 0; i < ARRAY_SIZE(pm8038_gpios_boston_evt0_nc_pins); i++) {
+				rc = pm8xxx_gpio_config(pm8038_gpios_boston_evt0_nc_pins[i].gpio,
+							&pm8038_gpios_boston_evt0_nc_pins[i].config);
+				if (rc) {
+					pr_err("%s at %d: pm8xxx_gpio_config: rc=%d\n", __func__, __LINE__, rc);
+					break;
+				}
+			}
+			//Boston evt0 pmic 8038 mpp NC pin
+			for (i = 0; i < ARRAY_SIZE(pm8038_mpps_boston_evt0_nc_pins); i++) {
+				rc = pm8xxx_mpp_config(pm8038_mpps_boston_evt0_nc_pins[i].mpp,
+							&pm8038_mpps_boston_evt0_nc_pins[i].config);
+				if (rc) {
+					pr_err("%s at %d: pm8xxx_mpp_config: rc=%d\n", __func__, __LINE__, rc);
+					break;
+				}
+			}
+		}
+	}
+	/* } Terry Cheng, 20121127, Port Boston EVT0 PMIC 8038 GPIO and MPP config */	
 }
 
 void __init msm8930_pm8917_gpio_mpp_init(void)
@@ -265,6 +319,8 @@ static struct pm8xxx_adc_amux pm8038_adc_channels_data[] = {
 		ADC_DECIMATION_TYPE2, ADC_SCALE_XOTHERM},
 	{"pa_therm0", ADC_MPP_1_AMUX3, CHAN_PATH_SCALING1, AMUX_RSV1,
 		ADC_DECIMATION_TYPE2, ADC_SCALE_PA_THERM},
+	{"mpp_amux6", ADC_MPP_2_AMUX6, CHAN_PATH_SCALING1, AMUX_RSV1,
+		ADC_DECIMATION_TYPE2, ADC_SCALE_DEFAULT}, //Sonia add it to initialize mpp_amux6
 };
 
 static struct pm8xxx_adc_properties pm8038_adc_data = {
@@ -295,8 +351,8 @@ static struct pm8xxx_mpp_platform_data pm8xxx_mpp_pdata __devinitdata = {
 };
 
 static struct pm8xxx_rtc_platform_data pm8xxx_rtc_pdata __devinitdata = {
-	.rtc_write_enable	= false,
-	.rtc_alarm_powerup	= false,
+	.rtc_write_enable	= true,
+	.rtc_alarm_powerup	= true,
 };
 
 static struct pm8xxx_pwrkey_platform_data pm8xxx_pwrkey_pdata = {
@@ -306,42 +362,59 @@ static struct pm8xxx_pwrkey_platform_data pm8xxx_pwrkey_pdata = {
 };
 
 static int pm8921_therm_mitigation[] = {
-	1100,
+	1000, //Carl Chang, Sapporo HW require max 1000mA charge to battery
 	700,
 	600,
 	325,
 };
-
-#define MAX_VOLTAGE_MV		4200
+//Carl Chang, 20130503, HW team spec
+//  t<0,        stop charge
+//  0<t<5,     4.35V 500mA charge
+//  5<t<45,    4.35V 1000mA charge
+//  45<t<55,   4.25V 1000mA charge
+//  t>55,       stop charge
+#define MAX_VOLTAGE_MV		4350  //Eric Liu, Boston use 4.35V battery
 #define CHG_TERM_MA		100
 static struct pm8921_charger_platform_data pm8921_chg_pdata __devinitdata = {
 	.update_time		= 60000,
 	.max_voltage		= MAX_VOLTAGE_MV,
-	.min_voltage		= 3200,
+	.min_voltage		= 3400,       //Eric Liu, Boston use 3.4V as 0%
 	.uvd_thresh_voltage	= 4050,
 	.alarm_low_mv		= 3400,
 	.alarm_high_mv		= 4000,
-	.resume_voltage_delta	= 60,
+	.resume_voltage_delta	= 100,  //Carl Chang, Boston HW require vbatdet = 4.25V
 	.resume_charge_percent	= 99,
 	.term_current		= CHG_TERM_MA,
-	.cool_temp		= 10,
-	.warm_temp		= 40,
+	.cool_temp		= 5,   //Carl Chang, set cool_temp to 5'C
+	.warm_temp		= 45,  //Carl Chang, set warm_temp to 45'C
 	.temp_check_period	= 1,
-	.max_bat_chg_current	= 1100,
-	.cool_bat_chg_current	= 350,
-	.warm_bat_chg_current	= 350,
-	.cool_bat_voltage	= 4100,
-	.warm_bat_voltage	= 4100,
+	.max_bat_chg_current	= 1000, //Carl Chang, Sapporo HW require max 1000mA charge to battery
+	.cool_bat_chg_current	= 500, //Carl Chang, Boston 500mA charge to battery ,when cool
+	.warm_bat_chg_current	= 1000,//Carl Chang, Sapporo 1000mA charge to battery ,when warm
+	.cool_bat_voltage	= 4350,//Carl Chang, Boston use 4.35V ,when cool
+	.warm_bat_voltage	= 4250,//Carl Chang, Boston use 4.25V ,when warm
 	.thermal_mitigation	= pm8921_therm_mitigation,
 	.thermal_levels		= ARRAY_SIZE(pm8921_therm_mitigation),
-	.led_src_config		= LED_SRC_VPH_PWR,
-	.rconn_mohm		= 18,
+	.led_src_config		= LED_SRC_VPH_PWR, //Carl Chang, enable the LED power from VPH_PWR
+	.rconn_mohm		= 37,  //Carl Chang, Boston HW require 37 mOhm
+
+	//Eric Liu+, 20130409, use btc_override to replace HW charging protect
+	.btc_override = 1,
+	.btc_override_cold_degc = 0,  // t < 0'c
+	.btc_override_hot_degc = 55,  // t> 55'c , Carl Chang, Boston HW require hot_degc to 55'C
+	.btc_delay_ms = 10000,        // polling interval = 10s
+	.btc_panic_if_cant_stop_chg = 0,
+	//Eric Liu-
 };
 
+#if defined CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A || defined CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516
+#define PM8038_WLED_MAX_CURRENT		20
+#else
 #define PM8038_WLED_MAX_CURRENT		25
+#endif
 #define PM8XXX_LED_PWM_PERIOD		1000
 #define PM8XXX_LED_PWM_DUTY_MS		20
-#define PM8038_RGB_LED_MAX_CURRENT	12
+#define PM8038_RGB_LED_MAX_CURRENT	1  /* I = 1mA */
 
 static struct led_info pm8038_led_info[] = {
 	[0] = {
@@ -350,7 +423,6 @@ static struct led_info pm8038_led_info[] = {
 	},
 	[1] = {
 		.name			= "led:rgb_red",
-		.default_trigger	= "battery-charging",
 	},
 	[2] = {
 		.name			= "led:rgb_green",
@@ -365,6 +437,17 @@ static struct led_platform_data pm8038_led_core_pdata = {
 	.leds = pm8038_led_info,
 };
 
+#if defined CONFIG_FB_MSM_MIPI_DSI_TRULY_OTM9608A || defined CONFIG_FB_MSM_MIPI_DSI_TRUST_NT35516
+static struct wled_config_data wled_cfg = {
+	.dig_mod_gen_en = true,
+	.cs_out_en = true,
+	.ctrl_delay_us = 0,
+	.op_fdbck = false,
+	.ovp_val = WLED_OVP_35V,
+	.boost_curr_lim = WLED_CURR_LIMIT_525mA,
+	.num_strings = 2,
+};
+#else
 static struct wled_config_data wled_cfg = {
 	.dig_mod_gen_en = true,
 	.cs_out_en = true,
@@ -374,7 +457,8 @@ static struct wled_config_data wled_cfg = {
 	.boost_curr_lim = WLED_CURR_LIMIT_525mA,
 	.num_strings = 1,
 };
-
+#endif
+# if 0
 static int pm8038_led0_pwm_duty_pcts[56] = {
 		1, 4, 8, 12, 16, 20, 24, 28, 32, 36,
 		40, 44, 46, 52, 56, 60, 64, 68, 72, 76,
@@ -395,7 +479,7 @@ static struct pm8xxx_pwm_duty_cycles pm8038_led0_pwm_duty_cycles = {
 	.duty_ms = PM8XXX_LED_PWM_DUTY_MS,
 	.start_idx = 1,
 };
-
+#endif //Carl Chang, 20121130
 static struct pm8xxx_led_config pm8038_led_configs[] = {
 	[0] = {
 		.id = PM8XXX_ID_WLED,
@@ -410,7 +494,7 @@ static struct pm8xxx_led_config pm8038_led_configs[] = {
 		.max_current = PM8038_RGB_LED_MAX_CURRENT,
 		.pwm_channel = 5,
 		.pwm_period_us = PM8XXX_LED_PWM_PERIOD,
-		.pwm_duty_cycles = &pm8038_led0_pwm_duty_cycles,
+		//.pwm_duty_cycles = &pm8038_led0_pwm_duty_cycles,
 	},
 	[2] = {
 		.id = PM8XXX_ID_RGB_LED_GREEN,
@@ -418,7 +502,7 @@ static struct pm8xxx_led_config pm8038_led_configs[] = {
 		.max_current = PM8038_RGB_LED_MAX_CURRENT,
 		.pwm_channel = 4,
 		.pwm_period_us = PM8XXX_LED_PWM_PERIOD,
-		.pwm_duty_cycles = &pm8038_led0_pwm_duty_cycles,
+		//.pwm_duty_cycles = &pm8038_led0_pwm_duty_cycles,
 	},
 	[3] = {
 		.id = PM8XXX_ID_RGB_LED_BLUE,
@@ -426,7 +510,7 @@ static struct pm8xxx_led_config pm8038_led_configs[] = {
 		.max_current = PM8038_RGB_LED_MAX_CURRENT,
 		.pwm_channel = 3,
 		.pwm_period_us = PM8XXX_LED_PWM_PERIOD,
-		.pwm_duty_cycles = &pm8038_led0_pwm_duty_cycles,
+		//.pwm_duty_cycles = &pm8038_led0_pwm_duty_cycles,
 	},
 };
 
@@ -453,7 +537,7 @@ static struct pm8xxx_misc_platform_data pm8xxx_misc_pdata = {
 
 static struct pm8xxx_spk_platform_data pm8xxx_spk_pdata = {
 	.spk_add_enable		= false,
-	.cd_ng_threshold	= 0x6,
+	.cd_ng_threshold	= 0x0,
 	.cd_nf_preamp_bias	= 0x1,
 	.cd_ng_hold		= 0x6,
 	.cd_ng_max_atten	= 0x0,
@@ -464,20 +548,25 @@ static struct pm8xxx_spk_platform_data pm8xxx_spk_pdata = {
 };
 
 static struct pm8921_bms_platform_data pm8921_bms_pdata __devinitdata = {
-	.battery_type			= BATT_UNKNOWN,
+	.battery_type			= BATT_SBJ,//Carl Chang, add SBJ battery data
 	.r_sense_uohm			= 10000,
-	.v_cutoff			= 3400,
+	.v_cutoff			= 3400,      //Eric Liu, SW treat v_cutoff as min_voltage
 	.max_voltage_uv			= MAX_VOLTAGE_MV * 1000,
 	.shutdown_soc_valid_limit	= 20,
 	.adjust_soc_low_threshold	= 25,
 	.chg_term_ua			= CHG_TERM_MA * 1000,
-	.rconn_mohm			= 18,
+	.rconn_mohm			= 37,        //Carl Chang, Boston HW require 37 mOhm
 	.normal_voltage_calc_ms		= 20000,
 	.low_voltage_calc_ms		= 1000,
 	.alarm_low_mv			= 3400,
 	.alarm_high_mv			= 4000,
 };
-
+/* Add for vibrator */
+struct pm8xxx_vibrator_platform_data pm8xxx_vib_pdata = {
+ .max_timeout_ms = 15000,
+ .level_mV = 3100, //Carl Chang, Boston HW require vibrator voltage 3.1V
+};
+//Carl Chang, 20121130
 static struct pm8038_platform_data pm8038_platform_data __devinitdata = {
 	.irq_pdata		= &pm8xxx_irq_pdata,
 	.gpio_pdata		= &pm8xxx_gpio_pdata,
@@ -492,6 +581,7 @@ static struct pm8038_platform_data pm8038_platform_data __devinitdata = {
 	.leds_pdata		= &pm8xxx_leds_pdata,
 	.ccadc_pdata		= &pm8xxx_ccadc_pdata,
 	.spk_pdata		= &pm8xxx_spk_pdata,
+	.vibrator_pdata    = &pm8xxx_vib_pdata,//Carl Chang, 20121130
 };
 
 static struct msm_ssbi_platform_data msm8930_ssbi_pm8038_pdata __devinitdata = {
@@ -581,10 +671,12 @@ void __init msm8930_init_pmic(void)
 					&msm8930_ssbi_pm8038_pdata;
 		pm8038_platform_data.num_regulators
 			= msm8930_pm8038_regulator_pdata_len;
+#if 0 //Carl Chang ,we don't use this define
 		if (machine_is_msm8930_mtp())
 			pm8921_bms_pdata.battery_type = BATT_PALLADIUM;
 		else if (machine_is_msm8930_cdp())
 			pm8921_chg_pdata.has_dc_supply = true;
+#endif
 	} else {
 		/* PM8917 configuration */
 		pmic_reset_irq = PM8917_IRQ_BASE + PM8921_RESOUT_IRQ;
@@ -598,6 +690,10 @@ void __init msm8930_init_pmic(void)
 			pm8921_chg_pdata.has_dc_supply = true;
 	}
 
+//Eric Liu+, Boston don't use this define
+#if 0
 	if (!machine_is_msm8930_mtp())
 		pm8921_chg_pdata.battery_less_hardware = 1;
+#endif
+//Eric Liu-
 }

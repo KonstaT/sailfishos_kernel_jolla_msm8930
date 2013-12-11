@@ -26,7 +26,7 @@ void diag_smux_event(void *priv, int event_type, const void *metadata)
 
 	switch (event_type) {
 	case SMUX_CONNECTED:
-		pr_info("diag: SMUX_CONNECTED received\n");
+		diag_printk(1,"diag:%s SMUX_CONNECTED received\n",__func__);
 		driver->smux_connected = 1;
 		driver->in_busy_smux = 0;
 		/* read data from USB MDM channel & Initiate first write */
@@ -37,16 +37,16 @@ void diag_smux_event(void *priv, int event_type, const void *metadata)
 		driver->smux_connected = 0;
 		driver->lcid = LCID_INVALID;
 		msm_smux_close(LCID_VALID);
-		pr_info("diag: SMUX_DISCONNECTED received\n");
+		diag_printk(1,"diag:%s SMUX_DISCONNECTED received\n",__func__);
 		break;
 	case SMUX_WRITE_DONE:
-		pr_debug("diag: SMUX Write done\n");
+		diag_printk(1,"diag:%s SMUX Write done\n",__func__);
 		break;
 	case SMUX_WRITE_FAIL:
-		pr_info("diag: SMUX Write Failed\n");
+		diag_printk(1,"diag:%s SMUX Write Failed\n",__func__);
 		break;
 	case SMUX_READ_FAIL:
-		pr_info("diag: SMUX Read Failed\n");
+		diag_printk(1,"diag:%s SMUX Read Failed\n",__func__);
 		break;
 	case SMUX_READ_DONE:
 		len = ((struct smux_meta_read *)metadata)->len;
@@ -60,7 +60,7 @@ void diag_smux_event(void *priv, int event_type, const void *metadata)
 
 int diagfwd_write_complete_smux(void)
 {
-	pr_debug("diag: clear in_busy_smux\n");
+	diag_printk(1,"diag:%s clear in_busy_smux\n",__func__);
 	driver->in_busy_smux = 0;
 	return 0;
 }
@@ -79,7 +79,7 @@ int diag_get_rx_buffer(void *priv, void **pkt_priv, void **buffer, int size)
 		pr_debug("diag: set in_busy_smux as 1\n");
 		driver->in_busy_smux = 1;
 	} else {
-		pr_debug("diag: read buffer for SMUX is BUSY\n");
+		diag_printk(1,"diag:%s read buffer for SMUX is BUSY\n",__func__);
 		return -EAGAIN;
 	}
 	return 0;

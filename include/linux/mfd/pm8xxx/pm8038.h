@@ -34,6 +34,7 @@
 #include <linux/mfd/pm8xxx/ccadc.h>
 #include <linux/mfd/pm8xxx/spk.h>
 #include <linux/mfd/pm8xxx/tm.h>
+#include <linux/mfd/pm8xxx/vibrator.h>//Carl Chang,20121130 
 
 #define PM8038_CORE_DEV_NAME "pm8038-core"
 

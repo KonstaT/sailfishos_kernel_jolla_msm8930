@@ -156,6 +156,48 @@ static void pm8xxx_mpp_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 	}
 }
 
+/* Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp {*/
+void pm8xxx_mpp_dbg_show_suspend_resume_dump(void)
+{
+	static const char * const ctype[] = {	"d_in", "d_out", "bi_dir",
+						"a_in", "a_out", "sink",
+						"dtest_sink", "dtest_out"
+	};
+	struct pm8xxx_mpp_chip *mpp_chip ;
+	struct gpio_chip *gpio_chip = NULL;	
+	u8 type, state;
+	const char *label;
+	int i;
+
+
+	list_for_each_entry(mpp_chip, &pm8xxx_mpp_chips, link) {
+		if (mpp_chip)
+		{
+			gpio_chip = &mpp_chip->gpio_chip;
+			break;
+		}	
+	}		
+	if (!mpp_chip) {
+		pr_err("could not find pm8xxx mpp gpio chip");
+		return ;
+	}	
+	for (i = 0; i < mpp_chip->nmpps; i++) {
+		label = gpiochip_is_requested(gpio_chip, i);
+		type = (mpp_chip->ctrl_reg[i] & PM8XXX_MPP_TYPE_MASK) >>
+			PM8XXX_MPP_TYPE_SHIFT;
+		state = pm8xxx_mpp_get(gpio_chip, i);
+		printk("gpio-%-3d (%-12.12s) %-10.10s"
+				" %s 0x%02x\n",
+				gpio_chip->base + i,
+				label ? label : "--",
+				ctype[type],
+				state ? "hi" : "lo",
+				mpp_chip->ctrl_reg[i]);
+	}
+}
+EXPORT_SYMBOL_GPL(pm8xxx_mpp_dbg_show_suspend_resume_dump);
+/* } Terry Cheng, 20120220, dump soc gpio, pmic gpio, and pmic mpp */
+
 int pm8xxx_mpp_config(unsigned mpp, struct pm8xxx_mpp_config_data *config)
 {
 	struct pm8xxx_mpp_chip *mpp_chip;

@@ -72,6 +72,13 @@ int wake_lock_active(struct wake_lock *lock);
  */
 long has_wake_lock(int type);
 
+/* Terry Cheng, 20121019, Get active suspend lock for Power manager to diagnose {*/
+ssize_t  get_active_suspend_locks( char *buf, int bufer_size);
+/* } Terry Cheng, 20121019, Get active suspend lock for Power manager to diagnose */
+/* Terry Cheng, 20121122, Check charger or usb whether plugin {*/
+int  is_charger_usb_plugin(void);
+/* } Terry Cheng, 20121122, Check charger or usb whether plugin */
+
 #else
 
 static inline void wake_lock_init(struct wake_lock *lock, int type,
@@ -83,6 +90,12 @@ static inline void wake_unlock(struct wake_lock *lock) {}
 
 static inline int wake_lock_active(struct wake_lock *lock) { return 0; }
 static inline long has_wake_lock(int type) { return 0; }
+/* Terry Cheng, 20121019, Get active suspend lock for Power manager to diagnose {*/
+ssize_t  get_active_suspend_locks( char *buf, int bufer_size) { return 0; }
+/* } Terry Cheng, 20121019, Get active suspend lock for Power manager to diagnose */
+/* Terry Cheng, 20121122, Check charger or usb whether plugin {*/
+int  is_charger_usb_plugin(void){ return 0; }
+/* } Terry Cheng, 20121122, Check charger or usb whether plugin */
 
 #endif
 

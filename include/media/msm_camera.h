@@ -237,6 +237,58 @@
 #define MSM_CAM_IOCTL_AXI_RELEASE \
 	_IO(MSM_CAM_IOCTL_MAGIC, 67)
 
+//sophia wang ++
+struct otp_struct {
+	uint8_t customer_id;
+	uint8_t module_integrator_id;
+	uint8_t lens_id;
+	uint8_t year;
+	uint8_t mouth;
+	uint8_t date;
+	uint8_t hour;
+	uint8_t minuite;
+	uint8_t second;
+	uint8_t rg_ratio_d65;
+	uint8_t bg_ratio_d65;
+	uint8_t gb_gr_d65;
+	uint8_t rg_ratio_cwf;
+	uint8_t bg_ratio_cwf;
+	uint8_t gb_gr_cwf;
+	uint8_t rg_ratio_u30;
+	uint8_t bg_ratio_u30;
+	uint8_t gb_gr_u30;
+	uint8_t af_start_dac_msb;
+	uint8_t af_start_dac_lsb;
+	uint8_t af_macro_dac_msb;
+	uint8_t af_marco_dac_lsb;
+	//[0]:AF_START_DAC_MSB
+//[1]:AF_START_DAC_LSB
+//[2]:AF_MACRO_DAC_MSB
+//[3]:iAF_MACRO_DAC_LSB
+	uint8_t ov8825_af_otp[4];
+};
+// sophia wang --
+
+//Eric Liu+, for IMX091 Seattle
+struct otp_struct_imx091 {
+	uint8_t vendor_id;
+	uint8_t year;
+	uint8_t month;
+	uint8_t day;
+	uint16_t start_dac;
+	uint16_t macro_dac;
+	uint16_t d65_wb_r_over_g;
+	uint16_t d65_wb_b_over_g;
+	uint16_t d65_wb_gr_over_gb;
+	uint16_t cwf_wb_r_over_g;
+	uint16_t cwf_wb_b_over_g;
+	uint16_t cwf_wb_gr_over_gb;
+	uint16_t u30_wb_r_over_g;
+	uint16_t u30_wb_b_over_g;
+	uint16_t u30_wb_gr_over_gb;
+};
+//Eric Liu-
+
 struct v4l2_event_and_payload {
 	struct v4l2_event evt;
 	uint32_t payload_length;
@@ -1608,6 +1660,12 @@ struct msm_cam_clk_setting {
 	uint8_t enable;
 };
 
+struct otp_params{
+	struct otp_struct* otp_data;
+	struct otp_struct_imx091* otp_data_imx091;  //Eric Liu, for IMX091 Seattle
+	uint8_t size;
+};
+
 struct sensor_cfg_data {
 	int cfgtype;
 	int mode;
@@ -1635,6 +1693,7 @@ struct sensor_cfg_data {
 		struct sensor_output_info_t output_info;
 		struct msm_eeprom_data_t eeprom_data;
 		struct csi_lane_params_t csi_lane_params;
+		struct otp_params otp_params; // Sophia Wang, for camera OTP
 		/* QRD */
 		uint16_t antibanding;
 		uint8_t contrast;
@@ -1770,6 +1829,7 @@ enum af_camera_name {
 	ACTUATOR_MAIN_CAM_3,
 	ACTUATOR_MAIN_CAM_4,
 	ACTUATOR_MAIN_CAM_5,
+ 	ACTUATOR_MAIN_CAM_OV8825_TRULY, // Sophia Wang
 	ACTUATOR_WEB_CAM_0,
 	ACTUATOR_WEB_CAM_1,
 	ACTUATOR_WEB_CAM_2,

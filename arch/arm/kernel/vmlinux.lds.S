@@ -315,6 +315,16 @@ SECTIONS
 
 	NOTES
 
+	/* Bright Lee, 20120517, reboot log { */
+	#ifdef CONFIG_PANIC_LASTLOG
+	.data_lastlog : 
+	{ 
+		. = ALIGN(4);
+		*(.panic_logs)
+	}
+	#endif
+	/* } Bright Lee, 20120517 */
+
 	BSS_SECTION(0, 0, 0)
 	_end = .;
 

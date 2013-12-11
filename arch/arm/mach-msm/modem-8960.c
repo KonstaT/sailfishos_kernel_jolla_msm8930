@@ -35,6 +35,26 @@
 
 static int crash_shutdown;
 
+/* Terry Cheng, 20120516, Notify logmaster modem restarted and need to move ramdump file {*/
+#include <mach/kevent.h>
+/*} Terry Cheng, 20120516, Notify logmaster modem restarted and need to move ramdump file */
+
+/* Terry Cheng, 20120531, Check modem restart reason to determine whether save ramdump {*/
+#include <mach/boot_mode.h>
+#include <mach/oem_smem_struct.h>
+/* }Terry Cheng, 20120531, Check modem restart reason to determine whether save ramdump */
+
+/* Terry Cheng, 20120529, Add modem crash count for auto pin  {*/
+#include <linux/proc_fs.h>
+static int modem_crash_count = 0;
+/* }Terry Cheng, 20120529, Add modem crash count for auto pin  */
+
+/* Terry Cheng, 20120531, Check modem restart reason to determine whether save ramdump {*/
+static unsigned long int modem_reset_reason =  0;
+smem_vendor_id0_amss_data *vendor0_data;
+/* } Terry Cheng, 20120531, Check modem restart reason to determine whether save ramdump */
+
+
 static struct subsys_device *modem_8960_dev;
 
 #define MAX_SSR_REASON_LEN 81U
@@ -114,6 +134,20 @@ static int modem_shutdown(const struct subsys_desc *subsys)
 	disable_irq_nosync(Q6FW_WDOG_EXPIRED_IRQ);
 	disable_irq_nosync(Q6SW_WDOG_EXPIRED_IRQ);
 
+	/* Terry Cheng, 20120531, Move show modem crash err log and flush err log to file after diable modem watch dog {*/
+	smd_diag();
+	/* }Terry Cheng, 20120531, Move show modem crash err log and flush err log to file after diable modem watch dog */
+
+/* Terry Cheng, 20120903, Disable modem subsystem restart in Factory version {*/
+#ifdef CONFIG_BUILD_FACTORY
+	if (vendor0_data){	
+		modem_reset_reason = vendor0_data->modem_reboot_reason;
+		pr_info("%s modem_reset_reason = %lu\n", __FUNCTION__, modem_reset_reason);
+	}
+	if(modem_reset_reason != NONE_MODE)
+		panic("subsys-restart: modem crashed.\n");
+#endif //CONFIG_BUILD_FACTORY
+/* } Terry Cheng, 20120903, Disable modem subsystem restart in Factory version */
 	return 0;
 }
 
@@ -121,10 +155,18 @@ static int modem_shutdown(const struct subsys_desc *subsys)
 
 static int modem_powerup(const struct subsys_desc *subsys)
 {
+	/* Bright Lee, 20130206, reset modem_reboot_reason when powerdown, will cause ramdump each time { */
+	if (vendor0_data){
+		 vendor0_data->modem_reboot_reason = 0;
+	}
+	/* Bright Lee, 20130206 */
 	pil_force_boot("modem_fw");
 	pil_force_boot("modem");
 	enable_irq(Q6FW_WDOG_EXPIRED_IRQ);
 	enable_irq(Q6SW_WDOG_EXPIRED_IRQ);
+	/* Terry Cheng, 20120529, Add modem crash count for auto pin  {*/
+	modem_crash_count++;
+	/* Terry Cheng, 20120529, Add modem crash count for auto pin  {*/
 	return 0;
 }
 
@@ -154,8 +196,13 @@ static void *smem_ramdump_dev;
 static int modem_ramdump(int enable, const struct subsys_desc *crashed_subsys)
 {
 	int ret = 0;
+	/* Terry Cheng, 20120531, Check modem restart reason to determine whether save ramdump {*/
+	if (vendor0_data){
+		modem_reset_reason = vendor0_data->modem_reboot_reason;
+		pr_info("%s modem_reset_reason = %lu\n", __FUNCTION__, modem_reset_reason);
+	}
 
-	if (enable) {
+	if (enable && (modem_reset_reason != NONE_MODE)) {
 		ret = do_ramdump(modemsw_ramdump_dev, modemsw_segments,
 			ARRAY_SIZE(modemsw_segments));
 
@@ -181,8 +228,16 @@ static int modem_ramdump(int enable, const struct subsys_desc *crashed_subsys)
 			pr_err("Unable to dump smem memory (rc = %d).\n", ret);
 			goto out;
 		}
+		/* Terry Cheng, 20120516, Notify logmaster modem restarted and need to move ramdump file {*/
+		kevent_trigger(KEVENT_MODEM_CRASH);
+		/* } Terry Cheng, 20120516, Notify logmaster modem restarted and need to move ramdump file */
 	}
-
+	/* } Terry Cheng, 20120531, Check modem restart reason to determine whether save ramdump */
+	/* Bright Lee, 20130322, send uevent to logmaster for save smem log only { */
+	else {
+		kevent_trigger (KEVENT_MODEM_SMEM_LOG);
+	}
+	/* } Bright Lee, 20130322 */
 out:
 	return ret;
 }
@@ -228,6 +283,16 @@ static int modem_debug_set(void *data, u64 val)
 {
 	if (val == 1)
 		subsystem_restart_dev(modem_8960_dev);
+	else if (val == 2)
+		subsystem_restart("riva");
+	/* Bright Lee, 20130206 { */
+	else if (val == 3) {
+		if (vendor0_data){
+			vendor0_data->modem_reboot_reason = NONE_MODE;
+			subsystem_restart_dev(modem_8960_dev);
+		}
+	}
+	/* } Bright Lee, 20130206 */
 
 	return 0;
 }
@@ -254,12 +319,31 @@ static int modem_debugfs_init(void)
 	return 0;
 }
 
+/* Terry Cheng, 20120529, Add modem crash count for auto pin  {*/
+static int proc_read_modem_restart_count (char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+	int len;
+
+	len = snprintf (page, 10, "%d", modem_crash_count);
+	return strlen(page);
+}
+/* } Terry Cheng, 20120529, Add modem crash count for auto pin  */
 static int __init modem_8960_init(void)
 {
 	int ret;
+	/* Terry Cheng, 20120529, Add modem crash count for auto pin  {*/
+	struct proc_dir_entry *pe;
+	/* }Terry Cheng, 20120529, Add modem crash count for auto pin  */
 
 	if (cpu_is_apq8064() || cpu_is_apq8064ab())
 		return -ENODEV;
+
+	/* Terry Cheng, 20120531, Trigger reboot from modem subsystem request {*/
+	vendor0_data = smem_alloc(SMEM_ID_VENDOR0, sizeof (smem_vendor_id0_amss_data));
+
+	if (!vendor0_data)
+		pr_err("Alloc share memory SMEM_ID_VENDOR0 fail\n");
+	/* }Terry Cheng, 20120531, Trigger reboot from modem subsystem request */
 
 	ret = smsm_state_cb_register(SMSM_MODEM_STATE, SMSM_RESET,
 		smsm_state_cb, 0);
@@ -324,6 +408,13 @@ static int __init modem_8960_init(void)
 
 	ret = modem_debugfs_init();
 
+	/* Terry Cheng, 20120529, Add modem crash count for auto pin  {*/
+	pe = create_proc_read_entry("modem_restart_count", S_IRUGO, NULL, proc_read_modem_restart_count, NULL);
+	if (!pe) {
+		printk ("create modem_restart_count proc failed\n");
+		return -1;
+	}
+	/* } Terry Cheng, 20120529, Add modem crash count for auto pin */
 	pr_info("%s: modem fatal driver init'ed.\n", __func__);
 out:
 	return ret;

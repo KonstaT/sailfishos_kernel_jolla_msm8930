@@ -17,10 +17,27 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include "../../arch/arm/mach-msm/pmic.h"
+#include <mach/pmic.h>
 #include <linux/mfd/pm8xxx/core.h>
 #include <linux/mfd/pm8xxx/vibrator.h>
 
 #include "../staging/android/timed_output.h"
+
+/*add for and debug log */
+#include <linux/debugfs.h>
+extern struct dentry *kernel_debuglevel_dir;
+static unsigned int VIBRATOR_DLL=0;
+#define VIB_DEBUG_LEVEL 0
+#define VIB_INFO_LEVEL  1
+#define VIBRATOR_PRINTK(level, fmt, args...) if(level <= VIBRATOR_DLL) printk(fmt, ##args);
+/* Emily Jiang, 20120201 */
+
+/*add for PM_log*/
+#ifdef CONFIG_PM_LOG
+#include <mach/pm_log.h>
+#endif
+/*Carl Chang,20120528*/
 
 #define VIB_DRV			0x4A
 
@@ -35,13 +52,20 @@
 struct pm8xxx_vib {
 	struct hrtimer vib_timer;
 	struct timed_output_dev timed_dev;
-	spinlock_t lock;
+	//spinlock_t lock;
+	struct mutex lock;
 	struct work_struct work;
 	struct device *dev;
 	const struct pm8xxx_vibrator_platform_data *pdata;
 	int state;
 	int level;
 	u8  reg_vib_drv;
+	int volt;
+/*add for PM_log*/
+#ifdef CONFIG_PM_LOG
+	struct pmlog_device *pmlog_device;
+#endif
+/*Carl Chang,20120528*/
 };
 
 static struct pm8xxx_vib *vib_dev;
@@ -126,6 +150,13 @@ static int pm8xxx_vib_set(struct pm8xxx_vib *vib, int on)
 		if (rc < 0)
 			return rc;
 		vib->reg_vib_drv = val;
+/*add for PM_log*/
+#ifdef CONFIG_PM_LOG
+		rc = pmlog_device_on(vib->pmlog_device);
+		if (rc)
+			printk("pmlog_device_on fall rc = %d\n",rc);
+#endif
+/*Carl Chang,20120528*/
 	} else {
 		val = vib->reg_vib_drv;
 		val &= ~VIB_DRV_SEL_MASK;
@@ -133,6 +164,13 @@ static int pm8xxx_vib_set(struct pm8xxx_vib *vib, int on)
 		if (rc < 0)
 			return rc;
 		vib->reg_vib_drv = val;
+/*add for PM_log*/
+#ifdef CONFIG_PM_LOG
+                rc = pmlog_device_off(vib->pmlog_device);
+                if (rc)
+                        printk("pmlog_device_off fall rc = %d\n",rc);
+#endif
+/*Carl Chang,20120528*/
 	}
 	__dump_vib_regs(vib, "vib_set_end");
 
@@ -143,12 +181,14 @@ static void pm8xxx_vib_enable(struct timed_output_dev *dev, int value)
 {
 	struct pm8xxx_vib *vib = container_of(dev, struct pm8xxx_vib,
 					 timed_dev);
-	unsigned long flags;
+	//unsigned long flags;
 
 retry:
-	spin_lock_irqsave(&vib->lock, flags);
+	//spin_lock_irqsave(&vib->lock, flags);
+	mutex_lock(&vib->lock);
 	if (hrtimer_try_to_cancel(&vib->vib_timer) < 0) {
-		spin_unlock_irqrestore(&vib->lock, flags);
+		//spin_unlock_irqrestore(&vib->lock, flags);
+		mutex_unlock(&vib->lock);
 		cpu_relax();
 		goto retry;
 	}
@@ -163,7 +203,9 @@ retry:
 			      ktime_set(value / 1000, (value % 1000) * 1000000),
 			      HRTIMER_MODE_REL);
 	}
-	spin_unlock_irqrestore(&vib->lock, flags);
+	VIBRATOR_PRINTK(1, "%s: value(%d)\n", __func__, value);
+	//spin_unlock_irqrestore(&vib->lock, flags);
+	mutex_unlock(&vib->lock);
 	schedule_work(&vib->work);
 }
 
@@ -172,7 +214,9 @@ static void pm8xxx_vib_update(struct work_struct *work)
 	struct pm8xxx_vib *vib = container_of(work, struct pm8xxx_vib,
 					 work);
 
+	VIBRATOR_PRINTK(1, "%s ++\n", __func__);
 	pm8xxx_vib_set(vib, vib->state);
+	VIBRATOR_PRINTK(1, "%s --\n", __func__);
 }
 
 static int pm8xxx_vib_get_time(struct timed_output_dev *dev)
@@ -182,9 +226,12 @@ static int pm8xxx_vib_get_time(struct timed_output_dev *dev)
 
 	if (hrtimer_active(&vib->vib_timer)) {
 		ktime_t r = hrtimer_get_remaining(&vib->vib_timer);
+		VIBRATOR_PRINTK(1, "%s: time=%d \n", __func__, (int)ktime_to_us(r));
 		return (int)ktime_to_us(r);
-	} else
+	} else {
+		VIBRATOR_PRINTK(1, "%s: no timer device atcived--\n", __func__);
 		return 0;
+}
 }
 
 static enum hrtimer_restart pm8xxx_vib_timer_func(struct hrtimer *timer)
@@ -207,7 +254,7 @@ static int pm8xxx_vib_suspend(struct device *dev)
 	cancel_work_sync(&vib->work);
 	/* turn-off vibrator */
 	pm8xxx_vib_set(vib, 0);
-
+	VIBRATOR_PRINTK(1, "turn-off vibrator after suspend\n");
 	return 0;
 }
 
@@ -215,6 +262,116 @@ static const struct dev_pm_ops pm8xxx_vib_pm_ops = {
 	.suspend = pm8xxx_vib_suspend,
 };
 #endif
+
+#ifdef CONFIG_DEBUG_FS
+#define VIBRATOR_DRIVER_NAME	"pm8xxx-vibrator-dbg"
+static struct dentry *dent;
+
+static int dbg_vibrator_time_get(void *data, u64 *value)
+{
+	struct pm8xxx_vib *vib = (struct pm8xxx_vib *)data;
+	int time = 0;
+
+	time = pm8xxx_vib_get_time(&vib->timed_dev);
+
+	VIBRATOR_PRINTK(1, "%s: remaining vibrator time is %d\n",
+		__func__, time);
+
+	*value = time;
+
+	return 0;
+}
+
+static int dbg_vibrator_time_set(void *data, u64 value)
+{
+	struct pm8xxx_vib *vib = (struct pm8xxx_vib *)data;
+	int time = 0;
+
+	if (value > vib->pdata->max_timeout_ms) {
+		time = vib->pdata->max_timeout_ms;
+		VIBRATOR_PRINTK(1, "%s: The set value(%lld) is too large, set as 15000\n",
+			__func__, value);
+	} else {
+		time = value;
+		VIBRATOR_PRINTK(1, "%s: set time(%d) to vibrator\n",
+					__func__, time);
+	}
+		
+	pm8xxx_vib_enable(&vib->timed_dev, time);
+		
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(vibrator_fops, dbg_vibrator_time_get, dbg_vibrator_time_set, "%llu\n");
+
+/* HW to test vibrator continuous after suspend */
+static int dbg_vibrator_onoff_get(void *data, u64 *value)
+{
+	struct pm8xxx_vib *vib = (struct pm8xxx_vib *)data;
+
+	VIBRATOR_PRINTK(1, "%s: vibrator status is %s\n",
+		__func__, vib->state ? "On":"Off");
+
+	*value = vib->state;
+
+	return 0;
+}
+
+static int dbg_vibrator_onoff_set(void *data, u64 value)
+{
+	struct pm8xxx_vib *vib = (struct pm8xxx_vib *)data;
+
+	if (value == 0) {
+		mutex_lock(&vib->lock);
+		vib->state = 0;
+		mutex_unlock(&vib->lock);
+	} else if (value == 1) {
+		mutex_lock(&vib->lock);
+		vib->state = 1;
+		mutex_unlock(&vib->lock);
+	} else {
+			VIBRATOR_PRINTK(1, "%s: Error command(%lld)\n",
+				__func__, value);
+	}
+			
+	VIBRATOR_PRINTK(1, "%s: turn %s vibrator\n",
+		__func__, vib->state ? "on":"off");
+			
+	pm8xxx_vib_set(vib, vib->state);
+	
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(vibrator_onoff_fops, dbg_vibrator_onoff_get, dbg_vibrator_onoff_set, "%llu\n");
+
+static void vibrator_create_debugfs_entries(struct pm8xxx_vib *vib)
+{
+	dent = debugfs_create_dir(VIBRATOR_DRIVER_NAME, NULL);
+	if (dent) {
+		debugfs_create_file("vib_time", S_IRUGO | S_IWUGO, dent, vib, &vibrator_fops);
+		debugfs_create_file("vib_onoff", S_IRUGO | S_IWUGO, dent, vib, &vibrator_onoff_fops);
+	}
+}
+
+/* ************************************************************************
+ * Description: KERNEL_DEBUGLEVEL
+ * ************************************************************************ */
+static void vibrator_create_kernel_debuglevel_entries(void)
+{
+	if (kernel_debuglevel_dir != NULL) {
+		debugfs_create_u8("vibrator_dll", S_IRUGO | S_IWUGO,
+			kernel_debuglevel_dir, (u8 *)(&VIBRATOR_DLL));
+	} else {
+		VIBRATOR_PRINTK(0, "vibrator kernel debuglevel dir falied\n");
+	}
+}
+#else
+static void vibrator_create_debugfs_entries(struct msm_vib *vibe)
+{
+}
+static void vibrator_create_kernel_debuglevel_entries(void)
+{
+}
+#endif
+/* Emily Jiang, 20120201 */
 
 static int __devinit pm8xxx_vib_probe(struct platform_device *pdev)
 
@@ -224,6 +381,7 @@ static int __devinit pm8xxx_vib_probe(struct platform_device *pdev)
 	struct pm8xxx_vib *vib;
 	u8 val;
 	int rc;
+	printk("[vibrator] %s ,probe+++++ \n",__func__ );/*Carl Chang*/
 
 	if (!pdata)
 		return -EINVAL;
@@ -240,7 +398,13 @@ static int __devinit pm8xxx_vib_probe(struct platform_device *pdev)
 	vib->level	= pdata->level_mV / 100;
 	vib->dev	= &pdev->dev;
 
-	spin_lock_init(&vib->lock);
+	//spin_lock_init(&vib->lock);
+	mutex_init(&vib->lock);
+	/*Register PM_log*/
+#ifdef CONFIG_PM_LOG
+	vib->pmlog_device = pmlog_register_device(&pdev->dev);
+#endif
+	/*Carl Chang,20120528*/
 	INIT_WORK(&vib->work, pm8xxx_vib_update);
 
 	hrtimer_init(&vib->vib_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -270,12 +434,19 @@ static int __devinit pm8xxx_vib_probe(struct platform_device *pdev)
 	if (rc < 0)
 		goto err_read_vib;
 
-	pm8xxx_vib_enable(&vib->timed_dev, pdata->initial_vibrate_ms);
+	//pm8xxx_vib_enable(&vib->timed_dev, pdata->initial_vibrate_ms);
+	// Carl Chang, 20120829, remove initial vibrate
 
 	platform_set_drvdata(pdev, vib);
 
 	vib_dev = vib;
 
+	/* Add for debugfs and fvs mode test */
+	vibrator_create_debugfs_entries(vib_dev);
+	vibrator_create_kernel_debuglevel_entries();
+	/* Emily Jiang, 20120201 */
+	printk("[vibrator] %s ,probe----- \n",__func__ );/*Carl Chang*/
+	
 	return 0;
 
 err_read_vib:
@@ -310,13 +481,22 @@ static struct platform_driver pm8xxx_vib_driver = {
 
 static int __init pm8xxx_vib_init(void)
 {
-	return platform_driver_register(&pm8xxx_vib_driver);
+	int ret = 0;
+	printk("BootLog, +%s\n", __func__);
+	ret = platform_driver_register(&pm8xxx_vib_driver);
+	printk("BootLog, -%s, ret=%d\n", __func__,ret);
+        return ret;
 }
 module_init(pm8xxx_vib_init);
 
 static void __exit pm8xxx_vib_exit(void)
 {
 	platform_driver_unregister(&pm8xxx_vib_driver);
+	/*UnRegister PM_log*/
+#ifdef CONFIG_PM_LOG
+	pmlog_unregister_device(vib_dev->pmlog_device);
+#endif
+	/*Carl Chang,20120528*/
 }
 module_exit(pm8xxx_vib_exit);
 

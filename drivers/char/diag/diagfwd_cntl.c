@@ -26,7 +26,7 @@ static uint16_t reg_dirty;
 
 void diag_clean_modem_reg_fn(struct work_struct *work)
 {
-	pr_debug("diag: clean modem registration\n");
+	diag_printk(1,"diag:%s clean modem registration\n",__func__);
 	reg_dirty |= DIAG_CON_MPSS;
 	diag_clear_reg(MODEM_PROC);
 	reg_dirty ^= DIAG_CON_MPSS;
@@ -34,7 +34,7 @@ void diag_clean_modem_reg_fn(struct work_struct *work)
 
 void diag_clean_lpass_reg_fn(struct work_struct *work)
 {
-	pr_debug("diag: clean lpass registration\n");
+	diag_printk(1,"diag:%s clean lpass registration\n",__func__);
 	reg_dirty |= DIAG_CON_LPASS;
 	diag_clear_reg(QDSP_PROC);
 	reg_dirty ^= DIAG_CON_LPASS;
@@ -42,7 +42,7 @@ void diag_clean_lpass_reg_fn(struct work_struct *work)
 
 void diag_clean_wcnss_reg_fn(struct work_struct *work)
 {
-	pr_debug("diag: clean wcnss registration\n");
+	diag_printk(1,"diag:%s clean wcnss registration\n",__func__);
 	reg_dirty |= DIAG_CON_WCNSS;
 	diag_clear_reg(WCNSS_PROC);
 	reg_dirty ^= DIAG_CON_WCNSS;
@@ -63,7 +63,7 @@ void diag_smd_cntl_notify(void *ctxt, unsigned event)
 			queue_work(driver->diag_wq,
 				 &(driver->diag_read_smd_cntl_work));
 		else
-			pr_debug("diag: incomplete pkt on Modem CNTL ch\n");
+			diag_printk(1,"diag:%s incomplete pkt on Modem CNTL ch\n",__func__);
 		break;
 	case SMD_EVENT_OPEN:
 		queue_work(driver->diag_cntl_wq,
@@ -87,7 +87,7 @@ void diag_smd_qdsp_cntl_notify(void *ctxt, unsigned event)
 			queue_work(driver->diag_wq,
 				 &(driver->diag_read_smd_qdsp_cntl_work));
 		else
-			pr_debug("diag: incomplete pkt on LPASS CNTL ch\n");
+			diag_printk(1,"diag:%s incomplete pkt on LPASS CNTL ch\n",__func__);
 		break;
 	case SMD_EVENT_OPEN:
 		queue_work(driver->diag_cntl_wq,
@@ -111,7 +111,7 @@ void diag_smd_wcnss_cntl_notify(void *ctxt, unsigned event)
 			queue_work(driver->diag_wq,
 				 &(driver->diag_read_smd_wcnss_cntl_work));
 		else
-			pr_debug("diag: incomplete pkt on WCNSS CNTL ch\n");
+			diag_printk(1,"diag:%s incomplete pkt on WCNSS CNTL ch\n",__func__);
 		break;
 	case SMD_EVENT_OPEN:
 		queue_work(driver->diag_cntl_wq,
@@ -269,7 +269,7 @@ static int diag_smd_cntl_probe(struct platform_device *pdev)
 			r = smd_named_open_on_edge("APPS_RIVA_CTRL",
 				SMD_APPS_WCNSS, &driver->ch_wcnss_cntl,
 					driver, diag_smd_wcnss_cntl_notify);
-		pr_debug("diag: open CNTL port, ID = %d,r = %d\n", pdev->id, r);
+		diag_printk(1,"diag:%s open CNTL port, ID = %d,r = %d\n",__func__, pdev->id, r);
 	}
 	return 0;
 }
