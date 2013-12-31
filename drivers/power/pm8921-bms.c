@@ -2049,6 +2049,7 @@ exit_cc_algorithm:
   }
   else
   {
+    MSG3("Soc(fin,_cc._,_oo._(avg._)_cv._)vbatt(ocv_)(i_vs,_avg)temp,cc_uah___,comp_(c_soc)rbat,Lgocv,sec");
     MSG3("%3d(%3d,%3d.%d,%3d.%d(%3d.%d)%3d.%d)v%4d(%4d)(%4d,%4d)t%3d,c%8lld,%5d(%5d)r%3d,L%4d,s%2d",
       bms.last_soc, final_soc, bms.cc_soc/10, bms.cc_soc%10,
       bms.oo_soc/10, bms.oo_soc%10, oo_soc_middle/10, oo_soc_middle%10, bms.cv_soc/10, bms.cv_soc%10,
@@ -4639,7 +4640,7 @@ static void __exit pm8921_bms_exit(void)
 	platform_driver_unregister(&pm8921_bms_driver);
 }
 
-device_initcall(pm8921_bms_init);
+late_initcall(pm8921_bms_init);
 module_exit(pm8921_bms_exit);
 
 MODULE_LICENSE("GPL v2");

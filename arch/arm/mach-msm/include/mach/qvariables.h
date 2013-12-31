@@ -93,7 +93,6 @@
         VAR_INFO_ITEM(SUBSYS_RAMDUMP), \
         VAR_INFO_ITEM(QDLMODE), \
         VAR_INFO_ITEM(SU), \
-        {VAR_UNLOCK_STR,        VAR_UNLOCK_OFFSET,      VAR_UNLOCK_LEN, VAR_UNLOCK_OnVal}, \
     }
 
 

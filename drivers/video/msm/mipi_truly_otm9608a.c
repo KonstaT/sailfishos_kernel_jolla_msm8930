@@ -45,6 +45,11 @@ atomic_t LcdBlLogAfterResume = ATOMIC_INIT(0);
 #if LCM_RECOVERY_SUPPORT
 void lcm_pwr_ctrl(int on);
 static int recovery_lcm_param = 0;
+#define AUTO_DETECT_RECOVERY 1
+#if AUTO_DETECT_RECOVERY
+static struct workqueue_struct *lcm_recovery_wq;
+static struct delayed_work g_lcm_recovery_work;
+#endif
 #endif
 
 #if FB_MSM_MIPI_DSI_OTM9608A_LCMINFO
@@ -1931,10 +1936,8 @@ static void recovery_lcm(void)
 
 	LCD_PRINTK(0, "!!! %s()++, mipi_mode=%d, bl_level=%d\n", __func__, mipi->mode, mfd_bkl->bl_level);
 
-	mutex_lock(&mfd_bkl->dma->ov_mutex);
 	if(!mfd_bkl->panel_power_on) {
 		LCD_PRINTK(0, "%s: ## panel_power is already off after mutex got\n", __func__);
-		mutex_unlock(&mfd_bkl->dma->ov_mutex);
 		return;
 	}
 
@@ -1961,8 +1964,6 @@ static void recovery_lcm(void)
 		cmdreq.cb = NULL;
 
 		mipi_dsi_cmdlist_put(&cmdreq);
-
-		mutex_unlock(&mfd_bkl->dma->ov_mutex);
 	} else {
 		if(msm_project_id < SAPPORO)
 		{
@@ -1996,12 +1997,10 @@ static void recovery_lcm(void)
 		/* clean up ack_err_status */
 		mipi_dsi_cmd_bta_sw_trigger();
 
-		mutex_unlock(&mfd_bkl->dma->ov_mutex);
-
 		/* force to update current content in FB0 to LCM. */
 		/* since LCM just finished HW-reset, and LCM's FB is empty. */
 		mdp4_dsi_cmd_vsync_ctrl(mfd_bkl->fbi, 1);
-		mdp4_dsi_cmd_overlay(mfd_bkl);
+		mdp4_dsi_cmd_overlay_nolock(mfd_bkl);
 		mdp4_dsi_cmd_vsync_ctrl(mfd_bkl->fbi, 0);
 	}
 
@@ -2081,10 +2080,14 @@ static int recovery_lcm_param_set(const char *val, struct kernel_param *kp)
 	}
 	else if(recovery_lcm_param==2)
 	{
+		LCD_PRINTK(1, "### [LCM] Bypass check Recovery, lcm_param=%d\n", recovery_lcm_param);
+		/* recovery_lcm(); */
+	}
+	else if(recovery_lcm_param==3)
+	{
 		mutex_lock(&mfd_bkl->dma->ov_mutex);
 		/* read LCM power mode */
 		pwrmode = mipi_read_lcm_power_mode(mfd_bkl);
-		mutex_unlock(&mfd_bkl->dma->ov_mutex);
 
 		if(pwrmode!=0x9C)
 		{
@@ -2093,11 +2096,8 @@ static int recovery_lcm_param_set(const char *val, struct kernel_param *kp)
 		}
 		else
 		{
-			mdelay(20);
-			mutex_lock(&mfd_bkl->dma->ov_mutex);
 			/* read LCM signal mode */
 			pwrsignal = mipi_read_lcm_signal_mode(mfd_bkl);
-			mutex_unlock(&mfd_bkl->dma->ov_mutex);
 
 			if(pwrsignal!=0x80)
 			{
@@ -2105,6 +2105,7 @@ static int recovery_lcm_param_set(const char *val, struct kernel_param *kp)
 				recovery_lcm();
 			}
 		}
+		mutex_unlock(&mfd_bkl->dma->ov_mutex);
 	}
 	else
 	{
@@ -2118,6 +2119,50 @@ static int recovery_lcm_param_set(const char *val, struct kernel_param *kp)
 
 module_param_call(recovery, recovery_lcm_param_set, param_get_long,
 		  &recovery_lcm_param, S_IWUSR | S_IRUGO);
+
+#if AUTO_DETECT_RECOVERY
+static void lcm_recovery_timer_handler( struct work_struct *work )
+{
+	unsigned int pwrmode=0, pwrsignal=0;
+
+	LCD_PRINTK(1, "%s +\n", __func__);
+
+	if((!mfd_bkl) || (!mfd_bkl->panel_power_on)) {
+		LCD_PRINTK(0, "%s: ## panel_power is off\n", __func__);
+		return;
+	}
+
+	mutex_lock(&mfd_bkl->dma->ov_mutex);
+
+	/* read LCM power mode */
+	pwrmode = mipi_read_lcm_power_mode(mfd_bkl);
+	LCD_PRINTK(1, "[LCM] read power mode=0x%x\n", pwrmode);
+
+	if(pwrmode!=0x9C)
+	{
+		LCD_PRINTK(0, "[LCM] ### pwrmode=0x%x, pwrsignal=0x%x ###\n", pwrmode, pwrsignal);
+		recovery_lcm();
+	}
+	else
+	{
+		/* read LCM signal mode */
+		pwrsignal = mipi_read_lcm_signal_mode(mfd_bkl);
+		LCD_PRINTK(1, "[LCM] read signal mode=0x%x\n", pwrsignal);
+
+		if(pwrsignal!=0x80)
+		{
+			LCD_PRINTK(0, "[LCM] ### pwrmode=0x%x, pwrsignal=0x%x ###\n", pwrmode, pwrsignal);
+			recovery_lcm();
+		}
+	}
+
+	mutex_unlock(&mfd_bkl->dma->ov_mutex);
+	queue_delayed_work(lcm_recovery_wq, &g_lcm_recovery_work, (5000 * HZ / 1000));
+
+	LCD_PRINTK(1, "%s -\n", __func__);
+}
+#endif
+
 #endif
 
 static int mipi_truly_otm9608a_lcd_on(struct platform_device *pdev)
@@ -2246,6 +2291,11 @@ static int mipi_truly_otm9608a_lcd_on(struct platform_device *pdev)
 #if LCD_BL_LOG_AFTER_SCREENON
 	// set counter. print 3 times log.
 	atomic_set(&LcdBlLogAfterResume,3);
+#endif
+
+
+#if AUTO_DETECT_RECOVERY
+	queue_delayed_work(lcm_recovery_wq, &g_lcm_recovery_work, (1000 * HZ / 1000));
 #endif
 
 	LCD_PRINTK(0, "%s()--\n", __func__);
@@ -2693,7 +2743,9 @@ static ssize_t mipi_otm9608a_mode_write(
 
 #if LCM_RECOVERY_SUPPORT
 		case 'r':
+				mutex_lock(&mfd_bkl->dma->ov_mutex);
 				recovery_lcm();
+				mutex_unlock(&mfd_bkl->dma->ov_mutex);
 			break;
 #endif
 
@@ -3273,6 +3325,13 @@ int mipi_truly_otm9608a_device_register(struct msm_panel_info *pinfo,
 		  "%s: platform_device_register failed!\n", __func__);
 		goto err_device_put;
 	}
+
+#if AUTO_DETECT_RECOVERY
+	lcm_recovery_wq = create_singlethread_workqueue("lcm_recovery_wq");
+
+	INIT_DELAYED_WORK( &g_lcm_recovery_work, lcm_recovery_timer_handler );
+	printk(KERN_ERR "init LCM RECOVERY DELAYED_WORK\n");
+#endif
 
 	return 0;
 

@@ -3065,6 +3065,9 @@ static struct platform_device *common_devices[] __initdata = {
 	&msm8930_pc_cntr,
 	&toh_device,
 	&toh_regulator,
+#if defined(CONFIG_REGULATOR_USERSPACE_CONSUMER)
+	&toh_userspace_consumer,
+#endif
 };
 
 static struct platform_device *cdp_devices[] __initdata = {

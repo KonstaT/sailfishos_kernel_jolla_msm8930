@@ -445,6 +445,10 @@ extern struct platform_device msm8930_cache_dump_device;
 extern struct platform_device toh_device;
 extern struct platform_device toh_regulator;
 
+#if defined(CONFIG_REGULATOR_USERSPACE_CONSUMER)
+extern struct platform_device toh_userspace_consumer;
+#endif
+
 extern struct platform_device mdm_sglte_device;
 
 extern struct platform_device apq_device_tz_log;

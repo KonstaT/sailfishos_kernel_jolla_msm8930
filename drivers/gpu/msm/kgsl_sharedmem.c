@@ -524,8 +524,6 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 	memdesc->pagetable = pagetable;
 	memdesc->priv = KGSL_MEMFLAGS_CACHED;
 	memdesc->ops = &kgsl_page_alloc_ops;
-
-	memdesc->sglen = sglen;
 	memdesc->sg = kgsl_sg_alloc(sglen);
 
 	if (memdesc->sg == NULL) {
@@ -550,7 +548,8 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 		ret = -ENOMEM;
 		goto done;
 	}
-
+        /* Bright Lee, Initialize here, or kgsl_page_alloc_free will be failed */
+	memdesc->sglen = sglen;
 	kmemleak_not_leak(memdesc->sg);
 
 	sg_init_table(memdesc->sg, sglen);
@@ -740,7 +739,8 @@ void kgsl_sharedmem_free(struct kgsl_memdesc *memdesc)
 	if (memdesc->ops && memdesc->ops->free)
 		memdesc->ops->free(memdesc);
 
-	kgsl_sg_free(memdesc->sg, memdesc->sglen);
+	if (memdesc->sg)
+		kgsl_sg_free(memdesc->sg, memdesc->sglen);
 
 	memset(memdesc, 0, sizeof(*memdesc));
 }

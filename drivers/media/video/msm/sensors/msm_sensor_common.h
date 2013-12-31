@@ -165,7 +165,8 @@ struct msm_sensor_fn_t {
 
         // sophia, for ov2675 otp write
 	uint8_t( *sensor_writ_otp)(struct msm_sensor_ctrl_t*, unsigned long long );
-       unsigned long long (*sensor_get_fuse_id)(struct msm_sensor_ctrl_t* );
+       signed long long (*sensor_get_fuse_id)(struct msm_sensor_ctrl_t* );
+       int16_t (* sensor_read_lens_id)(struct msm_sensor_ctrl_t*);
 };
 
 struct msm_sensor_csi_info {

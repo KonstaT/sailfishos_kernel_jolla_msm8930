@@ -34,6 +34,9 @@ static unsigned int ov2675_preview_gain16;
 static unsigned short ov2675_preview_binning;
 static unsigned int ov2675_preview_sysclk;
 static unsigned int ov2675_preview_HTS;
+/* information in otp*/
+static signed long long ov2675_fuse_id = 0;
+static int16_t ov2675_lens_id = 0;
 
 #ifdef CDBG
 	#undef CDBG
@@ -157,6 +160,268 @@ static struct msm_camera_i2c_reg_conf ov2675_groupoff_settings[] =
 /* move from ov2675_recommend_settings for waiting 1ms according to OV*/
 static struct msm_camera_i2c_reg_conf ov2675_reset_settings[] = {
 	{0x3012, 0x80},
+};
+
+static struct msm_camera_i2c_reg_conf ov2675_recommend_settings_lt1205[] =
+{
+    /* 20131204 version, co-work with OV for LT1205A lens*/
+
+    //IO & Clock & Analog Setup
+    {0x308c, 0x80}, 
+    {0x308d, 0x0e},
+    {0x360b, 0x00},
+    {0x30b0, 0xff},
+    {0x30b1, 0xff},
+    {0x30b2, 0x24},
+
+    {0x300e, 0x34}, 
+    {0x300f, 0xa6},
+    {0x3010, 0x80},
+    {0x3082, 0x01},
+    {0x30f4, 0x01},
+    {0x3090, 0x03},
+    {0x3091, 0xc0},
+    {0x30ac, 0x42},
+
+    {0x30d1, 0x08}, 
+    {0x30a8, 0x54},
+    {0x3015, 0x02},
+    {0x3093, 0x00},
+    {0x307e, 0xe5},
+    {0x3079, 0x00},
+    {0x30aa, 0x82},
+    {0x3017, 0x40},
+    {0x30f3, 0x83},
+    {0x306a, 0x0c},
+    {0x306d, 0x00},
+    {0x336a, 0x3c},
+    {0x3076, 0x6a},
+    {0x30d9, 0x95},
+    {0x3016, 0x52},
+    {0x3601, 0x30},
+    {0x304e, 0x88},
+    {0x30f1, 0x82},
+    {0x306f, 0x14},
+    {0x3012, 0x10},
+    {0x3011, 0x00},
+    {0x302a, 0x03},
+    {0x302b, 0x24},
+    {0x302d, 0x00},
+    {0x302e, 0x00},
+
+    //AEC/AGC
+    {0x3013, 0xf7}, 
+    {0x3015, 0x02},
+    {0x3018, 0x80},
+    {0x3019, 0x70},
+    {0x301a, 0xc4},
+
+    //D5060
+    {0x30af, 0x00}, 
+    {0x3048, 0x1f}, 
+    {0x3049, 0x4e},  
+    {0x304a, 0x40},  
+    {0x304f, 0x40},  
+    {0x304b, 0x02}, 
+    {0x304c, 0x00},  
+    {0x304d, 0x42},  
+    {0x304f, 0x40},  
+    {0x30a3, 0x91},
+    {0x30a1, 0x41},  
+    {0x3013, 0xf7}, 
+    {0x3014, 0x84},  
+    {0x3071, 0x00},
+    {0x3070, 0xb9},
+    {0x3073, 0x00},
+    {0x3072, 0x9a},
+    {0x301c, 0x02},
+    {0x301d, 0x03}, 
+    {0x304d, 0x42},     
+    {0x304a, 0x40},  
+    {0x304f, 0x40},  
+    {0x3095, 0x07},  
+    {0x3096, 0x16}, 
+    {0x3097, 0x1d},  
+
+    //Window Setup
+    {0x3020, 0x01},
+    {0x3021, 0x1a},
+    {0x3022, 0x00},
+    {0x3023, 0x06},
+    {0x3024, 0x06},
+    {0x3025, 0x58},
+    {0x3026, 0x02},
+    {0x3027, 0x61},
+    {0x3088, 0x02},
+    {0x3089, 0x80},
+    {0x308a, 0x01},
+    {0x308b, 0xe0},
+    {0x3316, 0x64},
+    {0x3317, 0x25},
+    {0x3318, 0x80},
+    {0x3319, 0x08},
+    {0x331a, 0x28},
+    {0x331b, 0x1e},
+    {0x331c, 0x00},
+    {0x331d, 0x38},
+    {0x3100, 0x00},
+
+    //;AWB
+    {0x3320, 0xfa},
+    {0x3321, 0x11},
+    {0x3322, 0x92},
+    {0x3323, 0x01},
+    {0x3324, 0x97},
+    {0x3325, 0x02},
+    {0x3326, 0xff},
+    {0x3327, 0x10},
+    {0x3328, 0x10},
+    {0x3329, 0x1f},
+    {0x332a, 0x56},
+    {0x332b, 0x54},
+    {0x332c, 0xbe},
+    {0x332d, 0xce},
+    {0x332e, 0x2e},
+    {0x332f, 0x30},
+    {0x3330, 0x4d},
+    {0x3331, 0x44},
+    {0x3332, 0xf0},
+    {0x3333, 0x0a},
+    {0x3334, 0xf0},
+    {0x3335, 0xf0},
+    {0x3336, 0xf0},
+    {0x3337, 0x40},
+    {0x3338, 0x40},
+    {0x3339, 0x40},
+    {0x333a, 0x00},
+    {0x333b, 0x00},
+
+    //;Color Matrix
+    {0x3380, 0x28},
+    {0x3381, 0x48},
+    {0x3382, 0x12},
+    {0x3383, 0x17},
+    {0x3384, 0xae},
+    {0x3385, 0xc5},
+    {0x3386, 0xc5},
+    {0x3387, 0xb8},
+    {0x3388, 0x0d},
+    {0x3389, 0x98},
+    {0x338a, 0x01},
+    {0x3398, 0x20},
+
+    //;Gamma
+    {0x3340, 0x06},
+    {0x3341, 0x0c},
+    {0x3342, 0x1c},
+    {0x3343, 0x36},
+    {0x3344, 0x4e},
+    {0x3345, 0x5f},
+    {0x3346, 0x6d},
+    {0x3347, 0x78},
+    {0x3348, 0x84},
+    {0x3349, 0x95},
+    {0x334a, 0xa5},
+    {0x334b, 0xb4},
+    {0x334c, 0xc8},
+    {0x334d, 0xde},
+    {0x334e, 0xf0},
+    {0x334f, 0x15},
+
+    //;Lens correction
+    {0x3350, 0x33}, 
+    {0x3351, 0x28}, 
+    {0x3352, 0x00},
+    {0x3353, 0x24},
+    {0x3354, 0x00},
+    {0x3355, 0x85},
+    {0x3356, 0x35}, 
+    {0x3357, 0x28}, 
+    {0x3358, 0x00},
+    {0x3359, 0x1e},
+    {0x335a, 0x00},
+    {0x335b, 0x85},
+    {0x335c, 0x34}, 
+    {0x335d, 0x28}, 
+    {0x335e, 0x00},
+    {0x335f, 0x1a},
+    {0x3360, 0x00},
+    {0x3361, 0x85},
+    {0x3363, 0x70},
+    {0x3364, 0x7f},
+    {0x3365, 0x00},
+    {0x3366, 0x00},
+    {0x3362, 0x80},
+
+    //;UVadjust
+    {0x3301, 0xff},
+    {0x338B, 0x13},
+    {0x338c, 0x10},
+    {0x338d, 0x40},
+
+    //;Sharpness/De-noise
+    {0x3370, 0xd0},
+    {0x3371, 0x00},
+    {0x3372, 0x00},
+    {0x3373, 0x50},
+    {0x3374, 0x10},
+    {0x3375, 0x10},
+    {0x3376, 0x09},
+    {0x3377, 0x00},
+    {0x3378, 0x04},
+    {0x3379, 0x80},
+
+    //;BLC
+    {0x3069, 0x86},
+    {0x307c, 0x10},
+    {0x3087, 0x02},
+
+    //;Other functions
+    {0x3300, 0xfc},
+    {0x3302, 0x11},
+    {0x3400, 0x00},
+    {0x3606, 0x20},
+    {0x3601, 0x30},
+    {0x30f3, 0x83},
+    {0x304e, 0x88},
+
+    //MIPI
+    {0x363b, 0x01}, 
+    {0x309e, 0x08},
+    {0x3606, 0x00},
+    {0x3630, 0x35},
+
+    {0x304e, 0x04},// [7] DVP_CLK_snr
+    {0x363b, 0x01},// disable cd
+    {0x309e, 0x08},// disable lp_rx
+    {0x3606, 0x00},// disable dvp
+    {0x3084, 0x01},// scale_div_man_en
+    {0x3634, 0x26},
+
+    {0x300e, 0x34}, 
+    {0x3011, 0x00},
+    {0x3010, 0x80},  
+
+
+    {0x3086, 0x0f}, // sleep on
+    {0x3086, 0x00}, // sleep off
+
+    /* saturation */
+    {0x3391, 0x06},
+    {0x3394, 0x50},
+    {0x3395, 0x50},
+
+    /* contrast */
+    {0x3390, 0x41},
+    {0x3398, 0x20},
+    {0x3399, 0x20},
+
+    /* AE window setting */
+    {0x3030, 0x55},
+    {0x3031, 0x7d},
+    {0x3032, 0x7d},
+    {0x3033, 0x55},   
+
 };
 
 static struct msm_camera_i2c_reg_conf ov2675_recommend_settings[] =
@@ -654,7 +919,6 @@ static struct msm_camera_i2c_reg_conf ov2675_snap_settings[] =
     {0x331d ,0x4c},
     {0x3302 ,0x01},
     {0x3373, 0x40},
-    {0x3376, 0x05},
 #endif
 };
 
@@ -699,7 +963,21 @@ static struct msm_camera_i2c_conf_array ov2675_confs[] =
 		MSM_CAMERA_I2C_BYTE_DATA,
 	},
 };
-
+static struct msm_camera_i2c_conf_array ov2675_init_lt1205_conf[] =
+{
+        {
+		&ov2675_reset_settings[0],
+		ARRAY_SIZE(ov2675_reset_settings),
+		1,// dealy 1 ms after sw reset
+		MSM_CAMERA_I2C_BYTE_DATA,
+	},
+	{
+		&ov2675_recommend_settings_lt1205[0],
+		ARRAY_SIZE(ov2675_recommend_settings_lt1205),
+		0,
+		MSM_CAMERA_I2C_BYTE_DATA,
+	},
+};
 
 static struct msm_camera_i2c_reg_conf ov2675_saturation[][4] = {
     {{0x3394, 0x00},
@@ -2968,7 +3246,23 @@ int32_t ov2675_sensor_setting(struct msm_sensor_ctrl_t *s_ctrl,
 		CDBG("Register INIT\n");
 		s_ctrl->func_tbl->sensor_stop_stream(s_ctrl);
 		msm_sensor_enable_debugfs(s_ctrl);
-		msm_sensor_write_init_settings(s_ctrl);
+              /* apply different tuning parameters for different lens*/
+		if( (ov2675_fuse_id > 0 && ov2675_lens_id == 1) ||
+		     (ov2675_fuse_id == 0 && ov2675_lens_id == 0)){
+              		msm_sensor_write_all_conf_array(
+              			s_ctrl->sensor_i2c_client,
+              			&ov2675_init_lt1205_conf[0],
+              			ARRAY_SIZE(ov2675_init_lt1205_conf));
+              		pr_info("%s, V2.0 sensor setting\n", __func__);
+              		
+		} else if (ov2675_fuse_id > 0 && ov2675_lens_id == 0){	
+			msm_sensor_write_init_settings(s_ctrl);
+			pr_info("%s, V1.0 sensor setting\n", __func__);
+			
+	       } else {
+			msm_sensor_write_init_settings(s_ctrl);
+			pr_info("%s, default sensor setting\n", __func__);
+	       }
 
 		ov2675_preview_shutter = OV2675_get_shutter(s_ctrl);
 		ov2675_preview_gain16 = OV2675_get_gain16(s_ctrl);
@@ -2977,6 +3271,23 @@ int32_t ov2675_sensor_setting(struct msm_sensor_ctrl_t *s_ctrl,
 		CDBG("PERIODIC : %d\n", res);
 
 		msm_sensor_write_res_settings(s_ctrl, res);
+
+		if( (ov2675_fuse_id > 0 && ov2675_lens_id == 1) ||
+			(ov2675_fuse_id == 0 && ov2675_lens_id  == 0))
+				msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 
+					0x3376, 
+					0x9, 
+					MSM_CAMERA_I2C_BYTE_DATA);
+		else if (ov2675_fuse_id > 0 && ov2675_lens_id == 0)
+				msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 
+					0x3376, 
+					0x5, 
+					MSM_CAMERA_I2C_BYTE_DATA);
+		else 
+				msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 
+					0x3376, 
+					0x5, 
+					MSM_CAMERA_I2C_BYTE_DATA);
 
 	if (res == MSM_SENSOR_RES_QTR)
 	{
@@ -3209,7 +3520,7 @@ uint8_t ov2675_write_otp(struct msm_sensor_ctrl_t *s_ctrl, unsigned long long in
 
 }
 
-unsigned long long ov2675_read_fuse_id( struct msm_sensor_ctrl_t *s_ctrl)
+signed long long ov2675_read_fuse_id( struct msm_sensor_ctrl_t *s_ctrl)
 {
        int32_t rc1 = 0, rc2 = 0, rc3 = 0, rc4 = 0, rc5 =0, rc6 =0, rc7 =0;
 	uint16_t id1 = 0, id2 = 0, id3 = 0, id4 = 0, id5=0, id6 =0 ;
@@ -3227,16 +3538,34 @@ unsigned long long ov2675_read_fuse_id( struct msm_sensor_ctrl_t *s_ctrl)
 	if(rc1 <0 || rc2<0 || rc3<0 || rc4<0 ||rc5<0 || rc6<0 || rc7 <0)
 	{
                pr_err("%s, read if failed\n", __func__);
-               return 0; 
+               return -1; 
 	}
 
 	snprintf(buf,14, "%02d%02d%02d%02d%02d%02d\n", id1, id2, id3, id4, id5, id6);
 
 	pr_err("%s, buf is %s\n", __func__, buf);
 
+	ov2675_fuse_id = simple_strtoull(buf, NULL, 10); 
 	return simple_strtoull(buf, NULL, 10);
 
+}
 
+int16_t ov2675_read_lens_id( struct msm_sensor_ctrl_t* s_ctrl)
+{
+	int32_t rc1 = 0, rc2 = 0;
+	uint16_t lens_id;
+
+	rc1 = msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x308f, 0x55, MSM_CAMERA_I2C_BYTE_DATA);
+	rc2 = msm_camera_i2c_read(s_ctrl->sensor_i2c_client, 0x30ec, &lens_id, MSM_CAMERA_I2C_BYTE_DATA);
+
+	if(rc1 < 0 || rc2 < 0){
+		pr_err("%s, read lens id failed\n", __func__);
+		return -1;
+	}
+
+       ov2675_lens_id = lens_id;
+       
+	return lens_id; 
 }
 
 struct msm_sensor_v4l2_ctrl_info_t ov2675_v4l2_ctrl_info[] = {
@@ -3461,6 +3790,7 @@ static struct msm_sensor_fn_t ov2675_func_tbl =
     .sensor_get_csi_params = msm_sensor_get_csi_params,
     .sensor_writ_otp = ov2675_write_otp,
     .sensor_get_fuse_id = ov2675_read_fuse_id,
+    .sensor_read_lens_id = ov2675_read_lens_id,
 };
 
 static struct msm_sensor_reg_t ov2675_regs =

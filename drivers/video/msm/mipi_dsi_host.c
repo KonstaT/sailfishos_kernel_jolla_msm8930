@@ -1526,6 +1526,7 @@ int mipi_dsi_cmd_dma_tx(struct dsi_buf *tp)
 			printk("%x ", *bp++);
 		printk("\n");
 		mipi_dsi_error();
+		dump_stack();
 		printk("%s DMA timeout: ", __func__);
 		reset_mipi_dsi_host();
 	}

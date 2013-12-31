@@ -15,6 +15,11 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/fixed.h>
 #include <linux/regulator/machine.h>
+
+#if defined(CONFIG_REGULATOR_USERSPACE_CONSUMER)
+#include <linux/regulator/userspace-consumer.h>
+#endif
+
 #include <asm/io.h>
 #include <linux/msm_ion.h>
 #include <mach/msm_iomap.h>
@@ -1412,14 +1417,8 @@ struct platform_device toh_device = {
 
 static struct regulator_consumer_supply toh_regulator_consumers[] = {
 	{
-		.dev_name = "toh-core.0",
 		.supply = "toh_vdd",
 	},
-	{
-		.supply = "toh_vdd_userspace",
-	},
-
-
 };
 
 static struct regulator_init_data toh_regulator_init_data = {
@@ -1449,3 +1448,24 @@ struct platform_device toh_regulator = {
 		.platform_data = &toh_regulator_info,
 	},
 };
+
+#if defined(CONFIG_REGULATOR_USERSPACE_CONSUMER)
+
+static struct regulator_bulk_data toh_userspace_regulator_data = {
+	.supply = TOH_REGULATOR_NAME,
+};
+
+static struct regulator_userspace_consumer_data toh_userspace_consumer_data = {
+	.name		= "toh_vdd_userspace",
+	.num_supplies	= 1,
+	.supplies	= &toh_userspace_regulator_data,
+};
+
+struct platform_device toh_userspace_consumer = {
+	.name = "reg-userspace-consumer",
+	.id = 0,
+	.dev = {
+		.platform_data = &toh_userspace_consumer_data,
+	},
+};
+#endif

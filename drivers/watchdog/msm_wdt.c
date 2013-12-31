@@ -24,8 +24,8 @@
 #include <mach/msm_iomap.h>
 #include <asm/mach-types.h>
 #include <linux/platform_device.h>
+#include <linux/suspend.h>
 #include <../msm_watchdog.h>  // located in arch/arm/mach-msm/msm_watchdog.h
-
 
 #define MODULE_NAME "msm_watchdog"
 
@@ -39,36 +39,35 @@
 #define WDT_MAXTIMEOUT  0x3FFF
 
 static void __iomem *msm_wdt_base;
+static void pet_watchdog_work(struct work_struct *work);
 static DEFINE_SPINLOCK(wdt_lock);
+static DECLARE_DELAYED_WORK(dogwork_struct, pet_watchdog_work);
 
-static int enable = 0;
+static atomic_t enable = ATOMIC_INIT(0);
 
 static void msm_wdt_enable(void)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	spin_lock(&wdt_lock);
 	__raw_writel(1, msm_wdt_base + WDT_EN);
 	__raw_writel(1, msm_wdt_base + WDT_RST);
 	mb();
-	enable = 1;
+	atomic_set(&enable,1);
 	spin_unlock(&wdt_lock);
 }
 
 static void msm_wdt_disable(void)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	spin_lock(&wdt_lock);
 	__raw_writel(1, msm_wdt_base + WDT_RST);
 	__raw_writel(0, msm_wdt_base + WDT_EN);
 	mb();
-	enable = 0;
+	atomic_set(&enable,0);
 	spin_unlock(&wdt_lock);
 }
 
 static int msm_wdt_settimeout(struct watchdog_device *wdd, unsigned int time)
 {
 	unsigned long timeout = (time * WDT_HZ);
-	pr_debug ("%s %d %d\n", __func__, __LINE__, time);
 	spin_lock(&wdt_lock);
 	__raw_writel(timeout, msm_wdt_base + WDT_BARK_TIME);
 	__raw_writel(timeout + 3*WDT_HZ, msm_wdt_base + WDT_BITE_TIME);
@@ -80,7 +79,6 @@ static int msm_wdt_settimeout(struct watchdog_device *wdd, unsigned int time)
 
 static void msm_wdt_keepalive(void)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	spin_lock(&wdt_lock);
 	__raw_writel(1, msm_wdt_base + WDT_RST);
 	spin_unlock(&wdt_lock);
@@ -88,35 +86,30 @@ static void msm_wdt_keepalive(void)
 
 void pet_watchdog(void)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	msm_wdt_keepalive();
 }
 
 static int msm_wdt_start (struct watchdog_device *wdd)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	msm_wdt_enable();
 	return 0;
 }
 
 static int msm_wdt_stop (struct watchdog_device *wdd)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	msm_wdt_disable();
-
 	return 0;
 }
 
 static int msm_wdt_ping (struct watchdog_device *wdd)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	msm_wdt_keepalive();
 	return 0;
 }
 
 static int msm_wdt_suspend(struct device *dev)
 {
-	if (!enable)
+	if (!atomic_read(&enable))
 		return 0;
 
 	__raw_writel(1, msm_wdt_base + WDT_RST);
@@ -127,7 +120,7 @@ static int msm_wdt_suspend(struct device *dev)
 
 static int msm_wdt_resume(struct device *dev)
 {
-	if (!enable)
+	if (!atomic_read(&enable))
 		return 0;
 
 	__raw_writel(1, msm_wdt_base + WDT_EN);
@@ -138,8 +131,12 @@ static int msm_wdt_resume(struct device *dev)
 
 static const struct watchdog_info msm_wdt_info = {
 	.identity	= "Qualcomm MSM Watchdog",
-	.options 	= WDIOF_SETTIMEOUT |
-			  WDIOF_KEEPALIVEPING,
+	.options 	= WDIOF_SETTIMEOUT
+			  | WDIOF_KEEPALIVEPING
+			  #ifdef CONFIG_WATCHDOG_NOWAYOUT
+			  | WDIOF_MAGICCLOSE
+			  #endif
+			  ,
 };
 
 static const struct watchdog_ops  msm_wdt_fops = {
@@ -157,13 +154,51 @@ static struct watchdog_device msm_wdt_dev = {
 	.max_timeout =	WDT_MAXTIMEOUT,
 };
 
+
+
+static void pet_watchdog_work(struct work_struct *work)
+{
+	pet_watchdog();
+	if (atomic_read(&enable)) {
+		schedule_delayed_work_on(0, &dogwork_struct, msm_wdt_dev.timeout / 2 * 100);
+	}
+}
+
+
+
+static int msm_wdt_pm_notifier(struct notifier_block *nb,
+				unsigned long event, void *unused)
+{
+	switch (event) {
+	case PM_SUSPEND_PREPARE:
+		pet_watchdog();
+		if (atomic_read(&enable)) { 
+			schedule_delayed_work_on(0, &dogwork_struct, msm_wdt_dev.timeout / 2 * 100);
+		}
+		break;
+
+	case PM_POST_SUSPEND:
+		pet_watchdog();
+		if (atomic_read(&enable)) {
+			cancel_delayed_work_sync (&dogwork_struct);
+		}
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block msm_wdt_pm_nb = {
+	.notifier_call = msm_wdt_pm_notifier,
+};
+
+
 static int msm_wdt_probe(struct platform_device *pdev)
 {
+	int retval;
 	struct msm_watchdog_pdata *pdata = pdev->dev.platform_data;
-	pr_debug ("%s %d\n", __func__, __LINE__);
 
 	if (!pdata) {
-		pr_debug(KERN_INFO "MSM Watchdog Not Initialized\n");
+		pr_err("MSM Watchdog Not Initialized\n");
 		return -ENODEV;
 	}
 
@@ -171,11 +206,15 @@ static int msm_wdt_probe(struct platform_device *pdev)
 
 	if (pdata->needs_expired_enable)
 		__raw_writel(0x1, MSM_CLK_CTL_BASE + 0x3820);
-		
-        __raw_writel(10 * WDT_HZ, msm_wdt_base + WDT_BARK_TIME); // set default timeout to prevent 
+
+        __raw_writel(10 * WDT_HZ, msm_wdt_base + WDT_BARK_TIME); // set default timeout to prevent
 	__raw_writel(13 * WDT_HZ, msm_wdt_base + WDT_BITE_TIME); // immediately dog bark once dog enable
 
 	watchdog_register_device (&msm_wdt_dev);
+
+	retval = register_pm_notifier(&msm_wdt_pm_nb);
+	if (retval)
+		pr_err("%s: power state notif error %d\n", __func__, retval);
 
 	return 0;
 }
@@ -209,16 +248,13 @@ static struct platform_driver msm_wdt_driver = {
 
 static int __init msm_wdt_init(void)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	return platform_driver_register(&msm_wdt_driver);
 }
 
 static void __exit msm_wdt_exit(void)
 {
-	pr_debug ("%s %d\n", __func__, __LINE__);
 	platform_driver_unregister(&msm_wdt_driver);
 }
-
 
 module_init(msm_wdt_init);
 module_exit(msm_wdt_exit);

@@ -2165,6 +2165,7 @@ static int get_prop_batt_fcc(struct pm8921_chg_chip *chip)
 	return rc;
 }
 
+#ifdef CHARGE_NOW
 static int get_prop_batt_charge_now(struct pm8921_chg_chip *chip, int *cc_uah)
 {
 	int rc;
@@ -2176,6 +2177,7 @@ static int get_prop_batt_charge_now(struct pm8921_chg_chip *chip, int *cc_uah)
 
 	return rc;
 }
+#endif /* CHARGE_NOW */
 
 static void check_temp_thresholds(struct pm8921_chg_chip *chip);  //Eric Liu
 static int get_prop_batt_health(struct pm8921_chg_chip *chip)
@@ -2458,10 +2460,17 @@ static int pm_batt_power_get_property(struct power_supply *psy,
 		}
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_NOW:
-		rc = get_prop_batt_charge_now(chip, &value);
-		if (!rc) {
-			val->intval = value;
+		/*
+		 * TODO: Do this right, now we just calculate it based on the
+		 * capacity
+		 */
+		rc = get_prop_batt_fcc(chip);
+		if (rc > 0) {
+		        rc = (rc * get_prop_batt_capacity(chip)) / 100;
+		        val->intval = rc;
 			rc = 0;
+		} else {
+			printk(KERN_ERR "get_prop_batt_fcc failure\n");
 		}
 		break;
 	case POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN:
@@ -6034,7 +6043,7 @@ static void __exit pm8921_charger_exit(void)
 	platform_driver_unregister(&pm8921_charger_driver);
 }
 
-device_initcall(pm8921_charger_init);
+late_initcall(pm8921_charger_init);
 module_exit(pm8921_charger_exit);
 
 MODULE_LICENSE("GPL v2");

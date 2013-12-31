@@ -416,6 +416,15 @@ static int msm_mctl_cmd(struct msm_cam_media_controller *p_mctl,
 		} else {
 			if (msm_sensor_state_check(p_mctl))
 				rc = msm_flash_ctrl(p_mctl->sdata, &flash_info);
+			/*Need to release the led flash even camera sensor power is off
+			   This case happen when there is crash in user space.
+			   Led flash cannot release and is always on.
+			   Actually led driver is independed with camera sensor driver.
+			   Led driver still can handle release when camera sensor power is off
+			*/
+			else if (flash_info.flashtype == LED_FLASH &&
+				 flash_info.ctrl_data.led_state == MSM_CAMERA_LED_RELEASE)
+				 rc = msm_flash_ctrl(p_mctl->sdata, &flash_info);
 		}
 		break;
 	}

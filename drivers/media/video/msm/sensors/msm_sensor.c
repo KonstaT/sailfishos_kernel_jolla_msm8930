@@ -2003,6 +2003,8 @@ int32_t msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 
 				}
 
+  				if(s_ctrl->func_tbl->sensor_read_lens_id != NULL)
+     					s_ctrl->func_tbl->sensor_read_lens_id(s_ctrl);
 			}
 
 		} else if(type == BACK_CAMERA_2D)
