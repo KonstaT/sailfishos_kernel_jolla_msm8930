@@ -272,6 +272,47 @@ static int touchpad_read_i2c(struct i2c_client *client,
     return result;
 }
 
+static void touchpad_set_dtap_mode(int enable)
+{
+	struct i2c_client *client = g_tp->client;
+	int rc = 0;
+	u8 f11_2D_ctrl0;
+
+	if (enable)
+		f11_2D_ctrl0 = 0xc; /* double tap mode */
+	else
+		f11_2D_ctrl0 = 0x8; /* disable double tap mode */
+
+	rc = touchpad_write_i2c(client, g_tp->pdt_map.F11_control_base,
+							&f11_2D_ctrl0, 1);
+	if (rc < 0) {
+		SYNAPTICS_PRINTK(0, "Failed write to f11_2D_ctrl0[0x%x]:0x%x",
+			g_tp->pdt_map.F11_control_base, f11_2D_ctrl0);
+		SYNAPTICS_PRINTK(0, "Error code rc=%d\n", rc);
+		return;
+	}
+}
+
+static void touchpad_set_sleep_mode(int sleep)
+{
+	struct i2c_client *client = g_tp->client;
+	int rc = 0;
+	u8 sleep_mode;
+
+	if (sleep)
+		sleep_mode = 0x01; /* Sleep mode */
+	else
+		sleep_mode = 0x00; /* Active mode */
+
+	rc = touchpad_write_i2c(client, g_tp->pdt_map.F01_control_base,
+							&sleep_mode, 1);
+	if (rc) {
+		SYNAPTICS_PRINTK(0, "Write fail [0x%x]:0x%x (rc=%d)\n",
+			g_tp->pdt_map.F01_control_base, sleep_mode, rc);
+		return;
+	}
+}
+
 /* Disabled cap key feature, 20131018 */
 #if 0
 static void touchpad_report_capkey(struct synaptics_tp_t *g_tp,uint8_t F1A_0D_data)
@@ -3432,6 +3473,17 @@ static ssize_t tp_dtap_store(struct device *dev, struct device_attribute *attr,c
 	new_value = !!new_value;
 
 	mutex_lock(&g_tp->mutex);
+	if (g_tp->dtap_allowed != new_value && g_tp->is_earlysuspended) {
+		if (new_value) {
+			/* Enable double tap wake up */
+			touchpad_set_dtap_mode(1);
+			touchpad_set_sleep_mode(0);
+		} else {
+			/* Disable double tap wake up and put touch to sleep */
+			touchpad_set_sleep_mode(1);
+			touchpad_set_dtap_mode(0);
+		}
+	}
 	g_tp->dtap_allowed = new_value;
 	mutex_unlock(&g_tp->mutex);
 
@@ -3878,8 +3930,7 @@ static void synaptics_early_suspend(struct early_suspend *handler)
 	struct synaptics_tp_t, ts_early_suspend);
 	struct i2c_client *client = g_tp->client;
 	int rc = 0;
-	/*add for double tap gesture, 20130801 */
-	uint8_t f11_2D_ctrl0,inrt_status,sleep_mode;
+	uint8_t inrt_status;
 		
 	SYNAPTICS_PRINTK(0, "%s() +++\n", __func__);
 	mutex_lock(&g_tp->mutex);
@@ -3896,13 +3947,8 @@ static void synaptics_early_suspend(struct early_suspend *handler)
 	mutex_lock(&g_tp->mutex);
 	
 	/* setup synaptics tp in sleep mode */
-	sleep_mode = 0x01;
-	rc = touchpad_write_i2c(client, g_tp->pdt_map.F01_control_base, &sleep_mode, 1);
-	if (rc) {
-		SYNAPTICS_PRINTK(0, "failed to write f01_control_base into sleep mode[0x%x]:0x%x (rc=%d)\n",
-			g_tp->pdt_map.F01_control_base, sleep_mode, rc);
-		return;
-	}
+	touchpad_set_sleep_mode(1);
+
 	msleep(50);
 	/* clear the isr status bit */
 	rc = touchpad_read_i2c(client, g_tp->pdt_map.F01_data_base+1, &inrt_status, 1);
@@ -3921,28 +3967,10 @@ static void synaptics_early_suspend(struct early_suspend *handler)
     }
 	SYNAPTICS_PRINTK(0, "isr status = %x\n", inrt_status);
 	/*add for double tap gesture, 20130801 { */
-	/* enable double tap wake up system for reporting mode */
-	f11_2D_ctrl0 = 0xc;
-	rc = touchpad_write_i2c(client, g_tp->pdt_map.F11_control_base, &f11_2D_ctrl0, 1);
-	if (rc < 0) {
-		SYNAPTICS_PRINTK(0, "Failed to write f11_2D_ctrl0[0x%x]:0x%x (rc=%d)\n", 
-			g_tp->pdt_map.F11_control_base, f11_2D_ctrl0, rc);
-		mutex_unlock(&g_tp->mutex);
-		SYNAPTICS_PRINTK(0, "%s()%d ---\n", __func__,__LINE__);
-		return;
+	if (g_tp->dtap_allowed) {
+		touchpad_set_dtap_mode(1);
+		touchpad_set_sleep_mode(0);
 	}
-	SYNAPTICS_PRINTK(0, "enable double tap gesture.\n");
-	msleep(1);
-	
-	/* setup synaptics tp in active mode */
-	sleep_mode = 0x00;
-	rc = touchpad_write_i2c(client, g_tp->pdt_map.F01_control_base, &sleep_mode, 1);
-	if (rc) {
-		SYNAPTICS_PRINTK(0, "failed to write active mode[0x%x]:0x%x (rc=%d)\n",
-			g_tp->pdt_map.F01_control_base, sleep_mode, rc);
-		return;
-	}
-	msleep(1);
 	/*} add for double tap gesture, 20130801 */
 	g_tp->is_earlysuspended = 1;
 	enable_irq(g_tp->irq);
@@ -3962,10 +3990,7 @@ static void synaptics_late_resume(struct early_suspend *handler)
 {
 	struct synaptics_tp_t *g_tp = container_of(handler, 
 		struct synaptics_tp_t, ts_early_suspend);
-	struct i2c_client *client = g_tp->client;
 	int rc = 0,i;
-	/*add for double tap gesture, 20130801 */
-	uint8_t f11_2D_ctrl0;
 	
 	SYNAPTICS_PRINTK(0, "%s() +++\n", __func__);
 	mutex_lock(&g_tp->mutex);
@@ -3982,19 +4007,13 @@ static void synaptics_late_resume(struct early_suspend *handler)
 	touchpad_report_coord(g_tp);
 	/*add for double tap gesture, 20130801 { */
 	/* disable double tap wake up system for reporting mode */
-	f11_2D_ctrl0 = 0x8;
-	rc = touchpad_write_i2c(client, g_tp->pdt_map.F11_control_base, &f11_2D_ctrl0, 1);
-	if (rc < 0) {
-		SYNAPTICS_PRINTK(0, "Failed to write f11_2D_ctrl0[0x%x]:0x%x (rc=%d)\n", 
-			g_tp->pdt_map.F11_control_base, f11_2D_ctrl0, rc);
-		mutex_unlock(&g_tp->mutex);
-		SYNAPTICS_PRINTK(0, "%s()%d ---\n", __func__,__LINE__);
-		return;
-	}
-	SYNAPTICS_PRINTK(0, "disable wakeup gesture.\n");
-	/*} add for double tap gesture, 20130801 */
+	if (g_tp->dtap_allowed)
+		touchpad_set_dtap_mode(0);
+	else
+		touchpad_set_sleep_mode(0);
+
 	g_tp->is_earlysuspended = 0;
-	
+
 	/* Add for PM LOG */
 #ifdef CONFIG_PM_LOG
 	rc = pmlog_device_on(g_tp->pmlog_device);

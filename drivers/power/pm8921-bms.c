@@ -523,6 +523,7 @@ static int pm8921_battery_gauge_alarm_notify(struct notifier_block *nb,
 		 */
 		wake_lock(&the_chip->low_voltage_wake_lock);
 		the_chip->low_voltage_wake_lock_held = 1;
+		MSG2("%s, LOW_VOLTAGE_WAKE_LOCK = 1",__func__);  //Carl Chang
 
 		rc = pm8xxx_batt_alarm_disable(
 				PM8XXX_BATT_ALARM_LOWER_COMPARATOR);
@@ -1258,6 +1259,7 @@ static struct batt_bms_data {
   //old for middle
   int       oo_soc_old[3];  //remember the oo soc, and pick the middle value
   int       ibat_vs_old[3]; //remember the ibat vs, and pick the middle value
+  int       vbat_old[3];    //remember the vbat(mV), and pick the middle or high value
 } bms;
 
 int bms_cc_per_soc = CC_PER_SOC_NOW;
@@ -1429,6 +1431,29 @@ static int batt_update_ibat_vs_middle(int ibat_vs)
   else
     return ibat_vs;
 }
+static int batt_update_vbat_for_poweroff(int temp, int vbat)  // (0.1c), (mV)
+{
+  static u8 middle[] = {1,0,2,0,0,2,0,1};
+  int index = 0, high;
+  bms.vbat_old[2] = bms.vbat_old[1];
+  bms.vbat_old[1] = bms.vbat_old[0];
+  bms.vbat_old[0] = vbat;
+  //normal temp, use middle vbat
+  if(temp >= 200)
+  {
+    if( bms.vbat_old[0] > bms.vbat_old[1] ) index += 4;
+    if( bms.vbat_old[1] > bms.vbat_old[2] ) index += 2;
+    if( bms.vbat_old[0] > bms.vbat_old[2] ) index ++;
+    if(bms.vbat_old[middle[index]])
+      return bms.vbat_old[middle[index]];
+    else
+      return vbat;
+  }
+  //cool temp, use high vbat
+  high = (bms.vbat_old[1] > bms.vbat_old[0])  ? bms.vbat_old[1] : bms.vbat_old[0];
+  high = (bms.vbat_old[2] > high)             ? bms.vbat_old[2] : high;
+  return high;
+}
 static void batt_read_bms_cc_and_update(struct pm8921_bms_chip *chip)
 {
   int64_t cc_voltage_uv, cc_uvh;
@@ -1527,6 +1552,7 @@ static int batt_ocv_get_rbatt(struct pm8921_bms_chip *chip,
 {
   int oo, pp, rr, rr_min, sf, i;
   int ro[16];  //rbat old
+  int vv_high, vv_low, rbat2;
   if(chip->rbatt_sf_lut == NULL)
     return chip->default_rbatt_mohm + chip->rconn_mohm;
   rr_min = chip->default_rbatt_mohm * 32; // max is 32 * default 
@@ -1559,23 +1585,38 @@ static int batt_ocv_get_rbatt(struct pm8921_bms_chip *chip,
 
 exit:
   //limit the rbat range at cool temp, low vbat
-  if(bms.temp < 200 && bms.vbatt_uv < 3500000 && rr > (chip->default_rbatt_mohm * 2))
+  if(tt < 200)
   {
-    int rbat2 = chip->default_rbatt_mohm * 2;
-    if(bms.vbatt_uv > 3400000)
+    //use current to select rbatt limit
+    if(ii >= 800 || ii <= -800)
     {
-      rr = rr - rbat2;
-      if(rr < 20000)  //be care of overflow
-        rr = rr * (bms.vbatt_uv - 3400000) / 100000 + rbat2;
+      vv_high = 3600;
+      vv_low  = 3330;
+      rbat2 = chip->default_rbatt_mohm * 3 / 2;
+    }
+    else if(ii >= 500 || ii <= -500)
+    {
+      vv_high = 3650;
+      vv_low  = 3350;
+      rbat2 = chip->default_rbatt_mohm * 2;
+    }
+    else
+    {
+      vv_high = 3700;
+      vv_low  = 3370;
+      rbat2 = chip->default_rbatt_mohm * 5 / 2;
+    }
+    if(vv < vv_high && rr > rbat2)
+    {
+      if(vv > vv_low)
+      {
+        rr = rr - rbat2;
+        rr = rr * (vv - vv_low) / (vv_high - vv_low) + rbat2;
+      }
       else
       {
-        rr = rr / 100;
-        rr = rr * (bms.vbatt_uv - 3400000) / 1000 + rbat2;
+        rr = rbat2;
       }
-	}
-  else
-    {
-      rr = rbat2;
     }
   }
   return rr;
@@ -1604,9 +1645,10 @@ static int batt_calculate_soc(struct pm8921_bms_chip *chip)
 	struct timespec time_delta;
 	int delta_sec_tenth;
   int ibat_vs, lg_ocv_changed = 0;
-  int ocv_uv, rbat, ibat_vs_middle, oo_soc_middle;
+  int ocv_uv, rbat, ibat_vs_middle, oo_soc_middle, vbat_for_poweroff;
   int final_soc;
   int cc_comp = 0;  //compensate
+  int cc_tenth = bms.cc_uah_per_soc / 10;
 
   //============================================
   //  Read status
@@ -1636,20 +1678,25 @@ static int batt_calculate_soc(struct pm8921_bms_chip *chip)
   {
     //middle
     ibat_vs_middle = batt_update_ibat_vs_middle(ibat_vs);
+    vbat_for_poweroff = batt_update_vbat_for_poweroff(bms.temp, bms.vbatt_uv/1000); //mV
 
     //ocv
-    rbat    = batt_ocv_get_rbatt(chip, bms.temp, bms.vbatt_uv/1000, ibat_vs);
+    rbat    = batt_ocv_get_rbatt(chip, bms.temp, bms.vbatt_uv/1000, ibat_vs); //mohm
     ocv_uv  = bms.vbatt_uv + rbat * ibat_vs;
 
     //while abnormal, use estimate lgocv and reset_cc
     if(lg_ocv_changed && abs(ocv_uv - bms.lg_ocv_uv) > 400000)  //lgocv abnormal (delta > 400mV)
     {
-      MSG2("## LGOCV = %07d -> %07d, CC = %lld -> 0, warm = %d #### ==== ####",
-        bms.lg_ocv_uv, ocv_uv, bms.cc_uah, is_warm_restart(chip));
-      bms.lg_ocv_uv = ocv_uv;
-      reset_cc(chip);
-      bms.cc = 0;
-      bms.cc_uah = 0;
+      int ocv_uv_est = bms.vbatt_uv + (chip->default_rbatt_mohm + chip->rconn_mohm) * ibat_vs;
+      if(abs(ocv_uv_est - bms.lg_ocv_uv) > 400000)
+      {
+        MSG2("## LGOCV = %07d -> %07d, CC = %lld -> 0, warm = %d #### ==== ####",
+          bms.lg_ocv_uv, ocv_uv_est, bms.cc_uah, is_warm_restart(chip));
+        bms.lg_ocv_uv = ocv_uv_est;
+        reset_cc(chip);
+        bms.cc = 0;
+        bms.cc_uah = 0;
+      }
     }
 
     bms.oo_soc = interpolate_soc(chip->soc_temp_ocv_lut, bms.temp/10, ocv_uv/1000);
@@ -1686,7 +1733,11 @@ static int batt_calculate_soc(struct pm8921_bms_chip *chip)
     delta_cc_uah = bms.cc_uah - bms.cc_base_cc_uah;
     while(1)
     {
-      int cc_tenth = bms.cc_uah_per_soc / 10;
+      if(bms.temp >= 200)       cc_tenth = bms.cc_uah_per_soc / 10;         // t>20'c 100% usable
+      else if(bms.temp >= 150)  cc_tenth = bms.cc_uah_per_soc * 97 / 1000;  // 15~20  97% usable
+      else if(bms.temp >= 100)  cc_tenth = bms.cc_uah_per_soc * 94 / 1000;  // 10~15  93% usable
+      else if(bms.temp >= 0)    cc_tenth = bms.cc_uah_per_soc * 90 / 1000;  // 0~10   90% usable
+      else                      cc_tenth = bms.cc_uah_per_soc * 85 / 1000;  // t<0'c  85% usable
       if(delta_cc_uah > cc_tenth)       //dis-chg
       {
         delta_cc_uah -= cc_tenth;
@@ -1731,17 +1782,23 @@ static int batt_calculate_soc(struct pm8921_bms_chip *chip)
     }
     else if(ibat_vs_middle > 0) //dis-chg
     {
-      int delta = bms.cc_soc - oo_soc_middle;
-      int delta_max, div;
-      if(bms.temp >= 200)   //compensate max 10%  (normal)
-        delta_max = 100;
-      else
-        delta_max = 300;    //compensate max 30%  (cool)
-      if(delta > delta_max)    //limit the adjust range
-        delta = delta_max;
-      else if(delta < -delta_max)
-        delta = -delta_max;
-      if(abs(bms.cc_soc - oo_soc_middle) > 100)   //speed up the compensate speed, pick the smaller one
+      int delta = bms.cc_soc - oo_soc_middle, div;
+      //limit the compensate max range
+      if(bms.temp >= 200)   // 10%  (normal)
+      {
+        if(delta > 100)         delta = 100;
+        else if(delta < -100)   delta = -100;
+      }
+      else                  // 30%  (cool)
+      {
+        if(delta > 300)         delta = 300;
+        else if(delta < -300)   delta = -300;
+      }
+      //the compensate formula
+      //a,  cc_comp = delta * ibat_vs_middle * delta_sec * 1000 / 3600 / (bms.cc_soc - 0);
+      //b,  cc_comp = delta * ibat_vs_middle * delta_sec_tenth / (36 * bms.cc_soc);
+      //speed up the compensate speed, pick the smaller one
+      if(abs(bms.cc_soc - oo_soc_middle) > 100)
       {
         if(bms.temp >= 200)
           div = (bms.cc_soc + oo_soc_middle) / 2;     //normal
@@ -1753,7 +1810,19 @@ static int batt_calculate_soc(struct pm8921_bms_chip *chip)
       else
         div = bms.cc_soc;
       if(div > 0) //protect from div 0
+      {
         cc_comp = delta * ibat_vs_middle * delta_sec_tenth / (36 * div);
+        //when vbat very low, double the compsate value
+        if(bms.vbatt_uv <= 3457000)
+        {
+          int soc_delta = abs(bms.cc_soc - oo_soc_middle);
+          if(soc_delta > 200)       cc_comp = cc_comp * 256 / 128;  //(2.00*128)/128
+          else if(soc_delta > 150)  cc_comp = cc_comp * 224 / 128;  //(1.75*128)/128
+          else if(soc_delta > 100)  cc_comp = cc_comp * 192 / 128;  //(1.50*128)/128
+          else if(soc_delta > 50)   cc_comp = cc_comp * 160 / 128;  //(1.25*128)/128
+          else                      cc_comp = cc_comp * 144 / 128;  //(1.125*128)/128
+        }
+      }
       else
         cc_comp = 0;
     }
@@ -1813,13 +1882,14 @@ exit_cc_algorithm:
       //  2.1, not valid
       //================
       if(!bms.start_valid_ocv ||                //ocv wasn't valid
-        ocv_delta < 75000 || soc_delta < 50)    //delta too small
+        ocv_delta < 75000 || soc_delta < 50 ||  //delta too small
+        bms.temp < 200)                         //cool temp
       {
-        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d (EOC Bypass)",
+        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d t%3d (EOC Bypass)",
           bms.start_ocv/1000, ocv_uv/1000, ocv_delta/1000,
           bms.start_soc/10, bms.start_soc%10, bms.oo_soc/10, bms.oo_soc%10,
           bms.start_cc, soc_delta/10, soc_delta%10, cc_per_soc,
-          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv);
+          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv, bms.temp);
       }
       //================
       //  2.2, valid
@@ -1827,11 +1897,11 @@ exit_cc_algorithm:
       else
       {
         batt_calculate_cc_per_soc(cc_per_soc, ocv_delta); //weighting
-        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d (EOC)",
+        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d t%3d (EOC)",
           bms.start_ocv/1000, ocv_uv/1000, ocv_delta/1000,
           bms.start_soc/10, bms.start_soc%10, bms.oo_soc/10, bms.oo_soc%10,
           bms.start_cc, soc_delta/10, soc_delta%10, cc_per_soc,
-          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv);
+          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv, bms.temp);
       }
       ccpersoc_log_push(bms.start_ocv, ocv_uv, bms.start_soc, bms.oo_soc, ibat_vs, bms.temp,
         bms.start_cc, cc_per_soc, cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv, (int)bms.time_now.tv_sec);
@@ -1857,13 +1927,14 @@ exit_cc_algorithm:
       //  3.1, not valid
       //================
       if(!bms.start_valid_ocv ||                //ocv wasn't valid
-        ocv_delta < 40000 || soc_delta < 50)    //delta too small
+        ocv_delta < 40000 || soc_delta < 50 ||  //delta too small
+        bms.temp < 200)                         //cool temp
       {
-        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d (LGOCV Bypass)",
+        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d t%3d (LGOCV Bypass)",
           bms.start_ocv/1000, bms.lg_ocv_uv/1000, ocv_delta/1000,
           bms.start_soc/10, bms.start_soc%10, bms.cc_base_soc/10, bms.cc_base_soc%10,
           bms.start_cc, soc_delta/10, soc_delta%10, cc_per_soc,
-          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv);
+          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv, bms.temp);
       }
       //================
       //  3.2, valid
@@ -1871,11 +1942,11 @@ exit_cc_algorithm:
       else
       {
         batt_calculate_cc_per_soc(cc_per_soc, ocv_delta); //weighting
-        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d (LGOCV)",
+        MSG2("## CC_ADJUST ## ocv=%4d->%4d(%4d) soc=%d.%d->%d.%d (%lld/%d.%d=%d) cps=%5d->%5d valid=%d t%3d (LGOCV)",
           bms.start_ocv/1000, bms.lg_ocv_uv/1000, ocv_delta/1000,
           bms.start_soc/10, bms.start_soc%10, bms.cc_base_soc/10, bms.cc_base_soc%10,
           bms.start_cc, soc_delta/10, soc_delta%10, cc_per_soc,
-          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv);
+          cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv, bms.temp);
       }
       ccpersoc_log_push(bms.start_ocv, bms.lg_ocv_uv, bms.start_soc, bms.cc_base_soc, ibat_vs, bms.temp,
         bms.start_cc, cc_per_soc, cc_old, bms.cc_uah_per_soc, bms.start_valid_ocv, (int)bms.time_now.tv_sec);
@@ -1954,9 +2025,9 @@ exit_cc_algorithm:
   //============================================
   //  final soc
   //============================================
-  if((bms.vbatt_uv >= 3400000) ||
-    (bms.vbatt_uv >= 3370000 && ibat_vs_middle > 500) ||
-    (bms.vbatt_uv >= 3330000 && ibat_vs_middle > 800) )
+  if((vbat_for_poweroff >= 3400) ||
+    (vbat_for_poweroff >= 3370 && ibat_vs_middle > 500) ||
+    (vbat_for_poweroff >= 3330 && ibat_vs_middle > 800) )
   {
     if(bms.cv_base_soc > 0)     //CV mode active?
       final_soc = bms.cv_soc / 10;
@@ -1985,6 +2056,8 @@ exit_cc_algorithm:
     else if(bms.power_off_wait_count > 2)
       final_soc = 0;            //bingo, shut down the phone
   }
+  if (final_soc <= 3 && vbat_for_poweroff >= 3900) //Carl Chang, CC 3%,dummy battery use case(Vbat set 4V)
+    final_soc = 3;
 
   //============================================
   //  soc step update (check the time wait)
@@ -2017,6 +2090,7 @@ exit_cc_algorithm:
     if((delta_sec_updated >= 30  && abs(ibat_vs_middle) >= 900) ||  // 30s, 900mA, soc update
       (delta_sec_updated >= 40  && abs(ibat_vs_middle) >= 700) ||   // 40s, 800mA, soc update
       (delta_sec_updated >= 50) ||                                  // 50s, soc update
+      (delta_sec_updated >= 20 && oo_soc_middle < 100 && (bms.last_soc != final_soc)) ||  //low capacity, 20s
       (bms.temp < 200 && delta_sec_updated >= 10 && abs(bms.last_soc - final_soc) >= 5) ) // cool, 10s, delta >= 5, soc update
     {
       if((!bms.usb_chg && final_soc < bms.last_soc) ||      //soc --, no usb
@@ -2042,20 +2116,19 @@ exit_cc_algorithm:
       bms.oo_soc/10, bms.oo_soc%10, oo_soc_middle/10, oo_soc_middle%10, bms.cv_soc/10, bms.cv_soc%10,
       bms.vbatt_uv/1000, ocv_uv/1000,
       ibat_vs, ibat_vs_middle, bms.temp,
-      bms.cc_uah, cc_comp, bms.cc_uah_per_soc,
+      bms.cc_uah, cc_comp, cc_tenth*10,
       rbat,
       bms.lg_ocv_uv/1000,
       delta_sec_tenth/10);
   }
   else
   {
-    MSG3("Soc(fin,_cc._,_oo._(avg._)_cv._)vbatt(ocv_)(i_vs,_avg)temp,cc_uah___,comp_(c_soc)rbat,Lgocv,sec");
     MSG3("%3d(%3d,%3d.%d,%3d.%d(%3d.%d)%3d.%d)v%4d(%4d)(%4d,%4d)t%3d,c%8lld,%5d(%5d)r%3d,L%4d,s%2d",
       bms.last_soc, final_soc, bms.cc_soc/10, bms.cc_soc%10,
       bms.oo_soc/10, bms.oo_soc%10, oo_soc_middle/10, oo_soc_middle%10, bms.cv_soc/10, bms.cv_soc%10,
       bms.vbatt_uv/1000, ocv_uv/1000,
       ibat_vs, ibat_vs_middle, bms.temp,
-      bms.cc_uah, cc_comp, bms.cc_uah_per_soc,
+      bms.cc_uah, cc_comp, cc_tenth*10,
       rbat,
       bms.lg_ocv_uv/1000,
       delta_sec_tenth/10);

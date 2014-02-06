@@ -253,6 +253,7 @@ static int batt_soc_filter(void)
     else
     {
       if((batt.temp < 200 && delta_sec >= 10 && abs(batt.soc_target - batt.soc_ap) >= 5) || // cool temp, delta >= 5, soc update
+        (delta_sec >= 20 && batt.soc_target < 10 && (batt.soc_target != batt.soc_ap)) ||    //low capacity, 20s
         (delta_sec >= 25) )
       {
         if(batt.soc_target > batt.soc_ap)
@@ -4018,8 +4019,9 @@ static void update_heartbeat(struct work_struct *work)
       batt_heartbeat_log();
   }
   {
-    if(chip->is_bat_warm || chip->is_bat_cool || //charging temp protect
-      batt.soc_ap != batt.soc_target ||       //soc filter
+    if(batt.soc_ap != batt.soc_target)        //soc filter
+      schedule_delayed_work(&chip->update_heartbeat_work, HZ*19/2); //polling around 10s, if soc not equal with BMS's
+    else if(chip->is_bat_warm || chip->is_bat_cool || //charging temp protect
       heartbeat_log_enable || batt_log1)      //log
       schedule_delayed_work(&chip->update_heartbeat_work, HZ*39/2); //Carl Chang , follow BMS LOG 15s -> 20s
     else
