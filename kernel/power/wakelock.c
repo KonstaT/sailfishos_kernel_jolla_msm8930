@@ -733,14 +733,31 @@ ssize_t  get_active_suspend_locks( char *buf, int bufer_size)
 			active_longest_lock = lock;
 		}
 	}
-	spin_unlock_irqrestore(&list_lock, irqflags);	
 	//Only return lock longest wakelock name and it must lock for 1 hour
-	/* Terry Cheng, 20130604, Remove hardcode and change to use module parameter to control {*/
+	/*
+	 * Terry Cheng, 20130604, Remove hardcode and change to use module
+	 * parameter to control {
+	 */
+	if (active_longest_lock && active_longest_lock->name &&
+				((ktime_to_ms(active_longest_time)) >=
+				(wakelock_watchdog_time/HZ*MSEC_PER_SEC))) {
+		/*
+		 * } Terry Cheng, 20130604, Remove hardcode and change to use
+		 * module parameter to control
+		*/
+		len = snprintf(buf, bufer_size, "%s",
+					active_longest_lock->name);
+	}
+	spin_unlock_irqrestore(&list_lock, irqflags);
+
 	pr_err("active_longest_time %llu", ktime_to_ms(active_longest_time));
-	if(active_longest_lock && ((ktime_to_ms(active_longest_time)) >= (wakelock_watchdog_time/HZ*MSEC_PER_SEC)))
-	/* } Terry Cheng, 20130604, Remove hardcode and change to use module parameter to control */
-		len = snprintf(buf, bufer_size, "%s",  active_longest_lock->name);		
-	pr_info("%s lock for %lld ms len = %d\n", active_longest_lock->name, ktime_to_ms(active_longest_time), len);
+
+	if (active_longest_lock && active_longest_lock->name) {
+		pr_info("%s lock for %lld ms len = %d\n",
+				active_longest_lock->name,
+				ktime_to_ms(active_longest_time), len);
+	}
+
 	return len;
 }
 EXPORT_SYMBOL(get_active_suspend_locks);

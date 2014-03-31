@@ -70,6 +70,8 @@
 #define MAX_TOUCH_MAJOR		15
 #include <mach/hwid.h>
 #include <linux/proc_fs.h>
+/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+#include <linux/wakelock.h>
 
 //DEBUG_LEVEL
 extern struct dentry *kernel_debuglevel_dir;
@@ -161,6 +163,8 @@ struct synaptics_tp_t {
     /* add sysfs API for enable double tap feature, 20131018 */
 	unsigned int dtap_allowed;
 	int irq_pending;
+	/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+	struct wake_lock doubletap_wakelock;
 };
 
 /*init synaptics IC first, if detect pass then don't init focaltech IC, if detect failed then init focaltech IC  */
@@ -293,6 +297,12 @@ static void touchpad_set_dtap_mode(int enable)
 	}
 }
 
+/* Last set sleep mode; 0x00 = Active mode is the default after reset */
+static u8 touchpad_sleep_mode = 0x00;
+
+/* Flag for: generate touch release events on resume */
+static u8 generate_touch_release = 0;
+
 static void touchpad_set_sleep_mode(int sleep)
 {
 	struct i2c_client *client = g_tp->client;
@@ -304,6 +314,13 @@ static void touchpad_set_sleep_mode(int sleep)
 	else
 		sleep_mode = 0x00; /* Active mode */
 
+	if( touchpad_sleep_mode == sleep_mode ) {
+		SYNAPTICS_PRINTK(0, "sleep mode %d already set\n", sleep_mode);
+		return;
+	}
+
+	SYNAPTICS_PRINTK(0, "setting sleep mode %d\n", sleep_mode);
+
 	rc = touchpad_write_i2c(client, g_tp->pdt_map.F01_control_base,
 							&sleep_mode, 1);
 	if (rc) {
@@ -311,6 +328,11 @@ static void touchpad_set_sleep_mode(int sleep)
 			g_tp->pdt_map.F01_control_base, sleep_mode, rc);
 		return;
 	}
+
+	if (sleep_mode == 0x01)
+		generate_touch_release = 1;
+
+	touchpad_sleep_mode = sleep_mode;
 }
 
 /* Disabled cap key feature, 20131018 */
@@ -453,6 +475,8 @@ static irqreturn_t touchpad_irq_thread(int irq, void *dev_id)
 			input_report_key(g_tp->keyarray_input, KEY_POWER, 0);
 			input_sync(g_tp->keyarray_input);
 			SYNAPTICS_PRINTK(0, "sent power key event\n");
+			/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+			wake_lock_timeout(&g_tp->doubletap_wakelock, 2 * HZ);
 		}
 	} else if (g_tp->is_suspended == 1) {
 		SYNAPTICS_PRINTK(0, "IST run when is_suspended = 1\n");
@@ -3871,6 +3895,9 @@ static int __devinit touchpad_probe(struct i2c_client *client, const struct i2c_
 	}
 /* Enable double tap feature, 20131018 */
 	g_tp->dtap_allowed = 1;
+	
+	/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+	wake_lock_init(&g_tp->doubletap_wakelock, WAKE_LOCK_SUSPEND, "DoubleTap");
 	return 0;
 
 err_register_keyarray_input:
@@ -3902,6 +3929,9 @@ static int __devexit touchpad_remove(struct i2c_client *client)
 #endif /* CONFIG_HAS_EARLYSUSPEND */
 
 	//misc_deregister(&ts_misc_device);
+	
+	/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+	wake_lock_destroy(&g_tp->doubletap_wakelock);
 	
 	/* Start cleaning up by removing any delayed work and the timer */
 	free_irq(g_tp->irq, g_tp);
@@ -3945,31 +3975,39 @@ static void synaptics_early_suspend(struct early_suspend *handler)
 	disable_irq(g_tp->irq);
 	SYNAPTICS_PRINTK(1,"disable irq %d\n", g_tp->irq);
 	mutex_lock(&g_tp->mutex);
-	
-	/* setup synaptics tp in sleep mode */
-	touchpad_set_sleep_mode(1);
 
-	msleep(50);
-	/* clear the isr status bit */
-	rc = touchpad_read_i2c(client, g_tp->pdt_map.F01_data_base+1, &inrt_status, 1);
-	if (rc < 0) {
-        SYNAPTICS_PRINTK(0, "Failed to read interrupt status[0x%x]:0x%x (rc=%d)\n",
-            g_tp->pdt_map.F01_data_base+1, inrt_status, rc);
-		return;
-	}
-	SYNAPTICS_PRINTK(0, "isr status = %x\n",inrt_status);
-	msleep(20);		
-    rc = touchpad_read_i2c(client, g_tp->pdt_map.F01_data_base+1, &inrt_status, 1);
-    if (rc < 0) {
-            SYNAPTICS_PRINTK(0, "Failed to read interrupt status[0x%x]:0x%x (rc=%d)\n",
-                g_tp->pdt_map.F01_data_base+1, inrt_status, rc);
-            return;
-    }
-	SYNAPTICS_PRINTK(0, "isr status = %x\n", inrt_status);
+	/* Clear the touch release events needed flag. Will be set
+	 * again if touchpad_set_sleep_mode(1) gets called for any reason
+	 * before the resume occurs. */
+	generate_touch_release = 0;
+
 	/*add for double tap gesture, 20130801 { */
 	if (g_tp->dtap_allowed) {
 		touchpad_set_dtap_mode(1);
 		touchpad_set_sleep_mode(0);
+	}
+	else {
+		/* setup synaptics tp in sleep mode */
+		touchpad_set_sleep_mode(1);
+
+		msleep(50);
+
+		/* clear the isr status bit */
+		rc = touchpad_read_i2c(client, g_tp->pdt_map.F01_data_base+1, &inrt_status, 1);
+		if (rc < 0) {
+			SYNAPTICS_PRINTK(0, "Failed to read interrupt status[0x%x]:0x%x (rc=%d)\n",
+					 g_tp->pdt_map.F01_data_base+1, inrt_status, rc);
+			return;
+		}
+		SYNAPTICS_PRINTK(0, "isr status = %x\n",inrt_status);
+		msleep(20);
+		rc = touchpad_read_i2c(client, g_tp->pdt_map.F01_data_base+1, &inrt_status, 1);
+		if (rc < 0) {
+			SYNAPTICS_PRINTK(0, "Failed to read interrupt status[0x%x]:0x%x (rc=%d)\n",
+					 g_tp->pdt_map.F01_data_base+1, inrt_status, rc);
+			return;
+		}
+		SYNAPTICS_PRINTK(0, "isr status = %x\n", inrt_status);
 	}
 	/*} add for double tap gesture, 20130801 */
 	g_tp->is_earlysuspended = 1;
@@ -3994,17 +4032,24 @@ static void synaptics_late_resume(struct early_suspend *handler)
 	
 	SYNAPTICS_PRINTK(0, "%s() +++\n", __func__);
 	mutex_lock(&g_tp->mutex);
-    /* reset mt points coordinates after wakeup */
-	for (i = 0 ; i < MAX_TS_REPORT_POINTS ; i++)
-	{
-		g_tp->msg[i].prev_state = g_tp->msg[i].state;
-		g_tp->msg[i].state = TS_RELEASE;
-		if(g_tp->msg[i].coord.z != -1) {
-			g_tp->msg[i].coord.z = 0;
-		} 
+
+	/* If Sleep mode was activated some time during suspend */
+	if (generate_touch_release) {
+		generate_touch_release = 0;
+
+		SYNAPTICS_PRINTK(0, "emitting touch release events\n");
+
+		/* reset mt points coordinates after wakeup */
+		for (i = 0 ; i < MAX_TS_REPORT_POINTS ; i++)
+		{
+			g_tp->msg[i].prev_state = g_tp->msg[i].state;
+			g_tp->msg[i].state = TS_RELEASE;
+			if(g_tp->msg[i].coord.z != -1) {
+				g_tp->msg[i].coord.z = 0;
+			}
+		}
+		touchpad_report_mt_protocol(g_tp);
 	}
-	touchpad_report_mt_protocol(g_tp);
-	touchpad_report_coord(g_tp);
 	/*add for double tap gesture, 20130801 { */
 	/* disable double tap wake up system for reporting mode */
 	if (g_tp->dtap_allowed)

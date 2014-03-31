@@ -1063,7 +1063,7 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 	int ret = 0, result;
 
         /* Bright Lee, 20120607, log thread abnormal termination for android reload { */
-        if ((sig <= SIGKILL || sig == SIGSTOP || sig == SIGSEGV || sig == SIGPIPE ) && sig != SIGALRM) {
+        if ((sig <= SIGKILL || sig == SIGSTOP || sig == SIGSEGV || sig == SIGPIPE ) && sig != SIGALRM && sig != SIGHUP) {
                 printk ("%s(%d) send signal %d to %s(%d)\n", current->comm, current->tgid, sig, t->comm, t->tgid);
 		   /* Terry Cheng, 20130507, Trigger abnormal camera usage when mm-qcamera-daemon receive some signal {*/	
 		   if((sig != SIGSTOP)&&((!strncmp(t->comm, "mm-qcamera-daem", 15))&&(current->tgid != t->tgid))){

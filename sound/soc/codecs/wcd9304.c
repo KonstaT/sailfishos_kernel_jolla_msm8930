@@ -318,6 +318,7 @@ struct sitar_priv {
 
 	bool gpio_irq_resend;
 	struct wake_lock irq_resend_wlock;
+	struct wake_lock irq_report_wlock;
 
 /* Jen Chang add for reading chip id */
 	u32 chipid;
@@ -1932,6 +1933,7 @@ static void sitar_snd_soc_jack_report(struct sitar_priv *sitar,
 				     int mask)
 {
 	/* XXX: wake_lock_timeout()? */
+	wake_lock_timeout(&sitar->irq_report_wlock, 3 * HZ);
     sndprintk(SND_DLL_DEBUG, "status %d mast %d\n", status, mask);
 	snd_soc_jack_report_no_dapm(jack, status, mask);
 }
@@ -5645,6 +5647,9 @@ static int sitar_codec_probe(struct snd_soc_codec *codec)
 		init_waitqueue_head(&sitar->dai[i].dai_wait);
 	}
 
+	wake_lock_init(&sitar->irq_report_wlock, WAKE_LOCK_SUSPEND,
+			"sitar_headset_report");
+
 /* Jen Chang add for reading chip id */
 	sitar_id = snd_soc_read(codec, WCD9XXX_A_CHIP_ID_BYTE_0);
 	sndprintk(SND_DLL_DEBUG, "%s : reg(0x%x) %d\n", __func__, WCD9XXX_A_CHIP_ID_BYTE_0, sitar_id);
@@ -5717,6 +5722,7 @@ static int sitar_codec_remove(struct snd_soc_codec *codec)
 	struct sitar_priv *sitar = snd_soc_codec_get_drvdata(codec);
 
 	wake_lock_destroy(&sitar->irq_resend_wlock);
+	wake_lock_destroy(&sitar->irq_report_wlock);
 
 	wcd9xxx_free_irq(codec->control_data, SITAR_IRQ_SLIMBUS, sitar);
 	wcd9xxx_free_irq(codec->control_data, SITAR_IRQ_MBHC_RELEASE, sitar);

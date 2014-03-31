@@ -22,6 +22,8 @@
 
 #include <linux/mfd/pm8xxx/core.h>
 #include <linux/input/pmic8xxx-pwrkey.h>
+/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+#include <linux/wakelock.h>
 
 #define PON_CNTL_1 0x1C
 #define PON_CNTL_PULL_UP BIT(7)
@@ -38,6 +40,8 @@ struct pmic8xxx_pwrkey {
 	int key_release_irq;
 	bool press;
 	const struct pm8xxx_pwrkey_platform_data *pdata;
+	/* Emily jiang, Fixes power key press can be ignored when device is suspending. 20140218 */
+	struct wake_lock pwrkey_wakelock;
 };
 
 static irqreturn_t pwrkey_press_irq(int irq, void *_pwrkey)
@@ -54,6 +58,8 @@ static irqreturn_t pwrkey_press_irq(int irq, void *_pwrkey)
 	input_report_key(pwrkey->pwr, KEY_POWER, 1);
 	input_sync(pwrkey->pwr);
         printk("pwrkey[%d]:%d\n", KEY_POWER, pwrkey->press);
+	/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+	wake_lock_timeout(&pwrkey->pwrkey_wakelock, 2 * HZ);
 	return IRQ_HANDLED;
 }
 
@@ -72,6 +78,8 @@ static irqreturn_t pwrkey_release_irq(int irq, void *_pwrkey)
 	input_report_key(pwrkey->pwr, KEY_POWER, 0);
 	input_sync(pwrkey->pwr);
         printk("pwrkey[%d]:%d\n", KEY_POWER, pwrkey->press);
+	/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+	wake_lock_timeout(&pwrkey->pwrkey_wakelock, 2 * HZ);
 	return IRQ_HANDLED;
 }
 
@@ -212,7 +220,8 @@ static int __devinit pmic8xxx_pwrkey_probe(struct platform_device *pdev)
 	}
 
 	device_init_wakeup(&pdev->dev, pdata->wakeup);
-
+	/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+	wake_lock_init(&pwrkey->pwrkey_wakelock, WAKE_LOCK_SUSPEND, "pwrkey");
 	return 0;
 
 free_press_irq:
@@ -234,6 +243,8 @@ static int __devexit pmic8xxx_pwrkey_remove(struct platform_device *pdev)
 	int key_release_irq = platform_get_irq(pdev, 0);
 	int key_press_irq = platform_get_irq(pdev, 1);
 
+	/* Emily jiang, abort suspending procedure if power key event comes in during freezing. 20140218 */
+	wake_lock_destroy(&pwrkey->pwrkey_wakelock);
 	device_init_wakeup(&pdev->dev, 0);
 
 	free_irq(key_press_irq, pwrkey);

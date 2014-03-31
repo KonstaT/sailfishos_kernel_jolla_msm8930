@@ -1339,6 +1339,13 @@ static int batt_set_cc_per_soc(const char *val, struct kernel_param *kp)
     {
       bms.last_soc = bms.cc_soc / 10;
     }
+    //Carl Chang+, CC 3%,dummy battery use case(Vbat set 4V)
+    if(bms.last_soc <= 3 && bms.vbatt_uv >= 3900000)
+    {
+      MSG2("## In dummy battery case, last_soc %d->3",bms.last_soc);
+      bms.last_soc = 3;
+    }
+    //Carl Chang-
   }
 
 exit:
@@ -1490,7 +1497,7 @@ static void batt_read_bms_params_raw(struct pm8921_bms_chip *chip)
   pm_bms_read_output_data(chip, LAST_GOOD_OCV_VALUE, &bms.lg_ocv_raw);  //LOCV
   pm_bms_unlock_output_data(chip);
 
-  pm8xxx_writeb(chip->dev->parent, BMS_S1_DELAY, 0x00); //why? 若沒跑這段, vbat的value不會更新
+  pm8xxx_writeb(chip->dev->parent, BMS_S1_DELAY, 0x00); //why?
   pm_bms_masked_write(chip, BMS_CONTROL, BMS_MODE_BIT | EN_VBAT_BIT, BMS_MODE_BIT | EN_VBAT_BIT);
 
   if(bms.in_suspend)
@@ -2033,6 +2040,10 @@ exit_cc_algorithm:
       final_soc = bms.cv_soc / 10;
     else if(bms.cc_soc <= 9)    //CC 0.9%, but vbat still high, keep phone on
       final_soc = 1;
+    else if(bms.cc_soc >= 16 && bms.cc_soc <= 19) //cc 1.6~1.9 -> 2%
+      final_soc = 2;
+    else if(bms.cc_soc >= 26 && bms.cc_soc <= 29) //cc 2.6~2.9 -> 3%
+      final_soc = 3;
     else if(bms.cc_soc > 994)   //CC 99.4%
       final_soc = 100;
     else
@@ -2048,6 +2059,10 @@ exit_cc_algorithm:
         final_soc = 4;
       else if(bms.cc_soc <= 9)  //CC 0.9%, still wait the power off count
         final_soc = 1;
+      else if(bms.cc_soc >= 16 && bms.cc_soc <= 19) //cc 1.6~1.9 -> 2%
+        final_soc = 2;
+      else if(bms.cc_soc >= 26 && bms.cc_soc <= 29) //cc 2.6~2.9 -> 3%
+        final_soc = 3;
       else
         final_soc = bms.cc_soc / 10;
     }
@@ -2058,6 +2073,34 @@ exit_cc_algorithm:
   }
   if (final_soc <= 3 && vbat_for_poweroff >= 3900) //Carl Chang, CC 3%,dummy battery use case(Vbat set 4V)
     final_soc = 3;
+  //SBJ, add criteria for dis-charge to capacity 2%
+  if (final_soc <= 2 && bms.last_soc > 2)
+  {
+    if(bms.temp >= 200) //normal
+    {
+      //base on SBJ battery data, capacity 2%
+      //vbat ~= {3478,3597,3596,3583,3557} in temp {-20,0,25,40,60}
+      //pick 3590 as the reference
+      //rbat = default_rbatt_mohm * scale + rconn_mohm
+      //rbat ~= {7712,1307,262,201,183} in temp {-20,0,25,40,60}
+      //pick 250 for temp >= 20, pick 350 for temp < 20
+      if((vbat_for_poweroff >= 3590) ||
+        (vbat_for_poweroff >= 3470 && ibat_vs_middle > 500) ||  // 3590 - 250*0.5 = 3465
+        (vbat_for_poweroff >= 3420 && ibat_vs_middle > 800) )   // 3590 - 250*0.8 = 3400
+        final_soc = 3;
+      else if(final_soc == 1) //at least, report 2% once
+        final_soc = 2;
+    }
+    else  //cool
+    {
+      if((vbat_for_poweroff >= 3590) ||
+        (vbat_for_poweroff >= 3430 && ibat_vs_middle > 500) ||  // 3590 - 350*0.5 = 3415
+        (vbat_for_poweroff >= 3380 && ibat_vs_middle > 800) )   // 3590 - 359*0.8 = 3302
+        final_soc = 3;
+      else if(final_soc == 1) //at least, report 2% once
+        final_soc = 2;
+    }
+  }
 
   //============================================
   //  soc step update (check the time wait)
@@ -3654,17 +3697,18 @@ EXPORT_SYMBOL_GPL(pm8921_bms_get_current_max);
 
 int pm8921_bms_get_fcc(void)
 {
-	int batt_temp;
-
 	if (!the_chip) {
 		pr_err("called before initialization\n");
 		return -EINVAL;
 	}
 
-	//return bms.cc_uah_per_soc*100;  //Eric Liu //todo
-
+	return bms.cc_uah_per_soc*100;  /* Eric Liu */
+	/* the value above is related to the charging algorithm, although the value
+	   returned does not match reality, while this commented out section seems to
+	   be correct.
 	get_batt_temp(the_chip, &batt_temp);
 	return calculate_fcc_uah(the_chip, batt_temp, last_chargecycles);
+	*/
 }
 EXPORT_SYMBOL_GPL(pm8921_bms_get_fcc);
 

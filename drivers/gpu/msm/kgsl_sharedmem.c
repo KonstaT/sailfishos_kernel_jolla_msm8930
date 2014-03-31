@@ -524,13 +524,15 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 	memdesc->pagetable = pagetable;
 	memdesc->priv = KGSL_MEMFLAGS_CACHED;
 	memdesc->ops = &kgsl_page_alloc_ops;
+        /* Bright Lee, Initialize here, or kgsl_page_alloc_free will be failed */
+	memdesc->sglen = sglen;
 	memdesc->sg = kgsl_sg_alloc(sglen);
 
 	if (memdesc->sg == NULL) {
 		KGSL_CORE_ERR("vmalloc(%d) failed\n",
 			sglen * sizeof(struct scatterlist));
 		ret = -ENOMEM;
-		goto done;
+		goto fail;
 	}
 
 	/*
@@ -546,10 +548,10 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 		KGSL_CORE_ERR("kmalloc (%d) failed\n",
 			sglen * sizeof(struct page *));
 		ret = -ENOMEM;
-		goto done;
+		kgsl_sg_free(memdesc->sg, sglen);
+		goto fail;
 	}
-        /* Bright Lee, Initialize here, or kgsl_page_alloc_free will be failed */
-	memdesc->sglen = sglen;
+
 	kmemleak_not_leak(memdesc->sg);
 
 	sg_init_table(memdesc->sg, sglen);
@@ -652,6 +654,7 @@ done:
 	if (ret)
 		kgsl_sharedmem_free(memdesc);
 
+fail:
 	return ret;
 }
 

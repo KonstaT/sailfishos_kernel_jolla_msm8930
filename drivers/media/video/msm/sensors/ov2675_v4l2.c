@@ -185,7 +185,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings_lt1205[] =
 
     {0x30d1, 0x08}, 
     {0x30a8, 0x54},
-    {0x3015, 0x02},
+    {0x3015, 0x33}, // 5fps, max gain:16
     {0x3093, 0x00},
     {0x307e, 0xe5},
     {0x3079, 0x00},
@@ -197,7 +197,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings_lt1205[] =
     {0x336a, 0x3c},
     {0x3076, 0x6a},
     {0x30d9, 0x95},
-    {0x3016, 0x52},
+    {0x3016, 0x62}, //[5:4]:2, 8x gain trigger night mode
     {0x3601, 0x30},
     {0x304e, 0x88},
     {0x30f1, 0x82},
@@ -211,7 +211,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings_lt1205[] =
 
     //AEC/AGC
     {0x3013, 0xf7}, 
-    {0x3015, 0x02},
+    {0x3015, 0x33}, // 5fps, max gain:16
     {0x3018, 0x80},
     {0x3019, 0x70},
     {0x301a, 0xc4},
@@ -229,7 +229,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings_lt1205[] =
     {0x30a3, 0x91},
     {0x30a1, 0x41},  
     {0x3013, 0xf7}, 
-    {0x3014, 0x84},  
+    {0x3014, 0x8c}, //[3]=1, enable night mode  
     {0x3071, 0x00},
     {0x3070, 0xb9},
     {0x3073, 0x00},
@@ -355,9 +355,9 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings_lt1205[] =
 
     //;UVadjust
     {0x3301, 0xff},
-    {0x338B, 0x13},
-    {0x338c, 0x10},
-    {0x338d, 0x40},
+    {0x338B, 0x10}, // 0x13->0x10
+    {0x338c, 0x20}, // 0x10->0x20
+    {0x338d, 0x7f}, // 0x40->0x7f
 
     //;Sharpness/De-noise
     {0x3370, 0xd0},
@@ -447,7 +447,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings[] =
 
     {0x30d1, 0x08}, 
     {0x30a8, 0x54},
-    {0x3015, 0x02},
+    {0x3015, 0x33}, // 5 fps, max gain:16
     {0x3093, 0x00},
     {0x307e, 0xe5},
     {0x3079, 0x00},
@@ -459,7 +459,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings[] =
     {0x336a, 0x3c},
     {0x3076, 0x6a},
     {0x30d9, 0x95},
-    {0x3016, 0x52},
+    {0x3016, 0x62}, // [5:4]:2, 8 gain trigger night mode
     {0x3601, 0x30},
     {0x304e, 0x88},
     {0x30f1, 0x82},
@@ -473,7 +473,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings[] =
 
     //AEC/AGC
     {0x3013, 0xf7}, 
-    {0x3015, 0x02},
+    {0x3015, 0x33}, // 5 fps, max gain:16x
     {0x3018, 0x80},
     {0x3019, 0x70},
     {0x301a, 0xc4},
@@ -491,7 +491,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings[] =
     {0x30a3, 0x91},
     {0x30a1, 0x41},  
     {0x3013, 0xf7}, 
-    {0x3014, 0x84},  
+    {0x3014, 0x8c}, //[3]=1, enable night mode    
     {0x3071, 0x00},
     {0x3070, 0xb9},
     {0x3073, 0x00},
@@ -617,9 +617,9 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings[] =
 
     //;UVadjust
     {0x3301, 0xff},
-    {0x338B, 0x13},
-    {0x338c, 0x10},
-    {0x338d, 0x40},
+    {0x338B, 0x10}, // 0x13->0x10
+    {0x338c, 0x20}, // 0x10->0x20
+    {0x338d, 0x7f}, // 0x40->0x7f
 
     //;Sharpness/De-noise
     {0x3370, 0xd0},
@@ -2122,7 +2122,7 @@ int ov2675_antibanding_msm_sensor_s_ctrl_by_enum(
             msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x304f, 0x20, MSM_CAMERA_I2C_BYTE_DATA);  
             msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x30a3, 0x10, MSM_CAMERA_I2C_BYTE_DATA);  
             msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x3013, 0xf7, MSM_CAMERA_I2C_BYTE_DATA); 
-            msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x3014, 0x44, MSM_CAMERA_I2C_BYTE_DATA);  
+            msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x3014, 0x4c, MSM_CAMERA_I2C_BYTE_DATA);  
             msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x3070, 0xba, MSM_CAMERA_I2C_BYTE_DATA);  
             msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x3071, 0x00, MSM_CAMERA_I2C_BYTE_DATA);  
             msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x3072, 0x9a, MSM_CAMERA_I2C_BYTE_DATA);  
@@ -3086,8 +3086,8 @@ static int ov2675_get_preview_exposure_gain(struct msm_sensor_ctrl_t *s_ctrl)
 	// read preview gain
 	ov2675_preview_gain16 = OV2675_get_gain16(s_ctrl);
 	ov2675_preview_binning = 1;
-	// turn off night mode for capture
-	rc = ov2675_set_nightmode(s_ctrl,0);
+	// turn on night mode for capture
+	rc = ov2675_set_nightmode(s_ctrl,1);
 
 	return rc;
 }
@@ -3209,16 +3209,16 @@ void ov2675_sensor_start_stream(struct msm_sensor_ctrl_t *s_ctrl)
 		s_ctrl->msm_sensor_reg->default_data_type);
 
 
-#if 1
+
        if(s_ctrl->curr_res == MSM_SENSOR_RES_QTR)
        ov2675_set_preview_exposure_gain(s_ctrl);
-  #endif
-	//Sophia Wang++
 
-  msleep(300);
+  /* when set night mode and min fps will be 5 fps, need to wait longer
+       Current we almost skip 4 frames to wait AE stable. 
+       Otherewise, there sill be discolor frames.
+       For 5 fps, each frame is almost 200 ms, 200*4 = 800ms */     
+  msleep(800);
 
-//	msleep(1000); // sophia, current , we need to delay almost one seconds, while back to preview, there is no obvious black screen.
-	//Sophia Wang--
 }
 
 void ov2675_sensor_stop_stream(struct msm_sensor_ctrl_t *s_ctrl)
