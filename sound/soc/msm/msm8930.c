@@ -586,6 +586,7 @@ static void *def_sitar_mbhc_cal(void)
 #define S(X, Y) ((SITAR_MBHC_CAL_PLUG_TYPE_PTR(sitar_cal)->X) = (Y))
 	S(v_no_mic, 30);
 	S(v_hs_max, 2550);
+	S(v_omtp_max, 1100);
 #undef S
 #define S(X, Y) ((SITAR_MBHC_CAL_BTN_DET_PTR(sitar_cal)->X) = (Y))
 	S(c[0], 62);

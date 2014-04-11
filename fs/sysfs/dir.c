@@ -1020,6 +1020,10 @@ static int sysfs_readdir(struct file * filp, void * dirent, filldir_t filldir)
 		int len, ret;
 
 		name = pos->s_name;
+		if(name == NULL) {
+			WARN_ON(name == NULL);
+			break;
+		}
 		len = strlen(name);
 		ino = pos->s_ino;
 		type = dt_type(pos);

@@ -79,7 +79,7 @@ int pm8xxx_vibrator_config(struct pm8xxx_vib_config *vib_config)
 
 	reg |= vib_config->enable_mode;
 
-	rc = pm8xxx_writeb(vib_dev, VIB_DRV, reg);
+	rc = pm8xxx_writeb(vib_dev->parent, VIB_DRV, reg);
 	if (rc)
 		pr_err("%s: pm8xxx write failed: rc=%d\n", __func__, rc);
 

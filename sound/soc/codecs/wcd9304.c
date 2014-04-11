@@ -217,6 +217,7 @@ enum sitar_mbhc_plug_type {
 	PLUG_TYPE_HEADSET,
 	PLUG_TYPE_HEADPHONE,
 	PLUG_TYPE_HIGH_HPH,
+	PLUG_TYPE_OMTP_HEADSET,
 };
 
 enum sitar_mbhc_state {
@@ -4201,6 +4202,8 @@ static bool sitar_codec_is_invalid_plug(struct snd_soc_codec *codec,
 	for (i = 0 ; i < MBHC_NUM_DCE_PLUG_DETECT && !r; i++) {
 		if (mic_mv[i] < plug_type_ptr->v_no_mic)
 			plug_type[i] = PLUG_TYPE_HEADPHONE;
+		else if (mic_mv[i] < plug_type_ptr->v_omtp_max)
+			plug_type[i] = PLUG_TYPE_OMTP_HEADSET;
 		else if (mic_mv[i] < plug_type_ptr->v_hs_max)
 			plug_type[i] = PLUG_TYPE_HEADSET;
 		else if (mic_mv[i] > plug_type_ptr->v_hs_max)
@@ -4420,6 +4423,11 @@ static void sitar_codec_decide_gpio_plug(struct snd_soc_codec *codec)
 		mbhc_debug_printk(SND_DLL_INFO, "%s: Valid plug found, determine plug type\n",
 			 __func__);
 		sitar_find_plug_and_report(codec, plug_type[0]);
+	} else if (plug_type[0] == PLUG_TYPE_OMTP_HEADSET) {
+		mbhc_debug_printk(SND_DLL_INFO, "%s: Valid plug found, determine plug type OMTP Headset\n",
+			 __func__);
+		sitar_codec_report_plug(codec, 1, SND_JACK_HEADPHONE);
+		sitar_schedule_hs_detect_plug(sitar);
 	}
     else if (plug_type[0] == PLUG_TYPE_HIGH_HPH)
     {

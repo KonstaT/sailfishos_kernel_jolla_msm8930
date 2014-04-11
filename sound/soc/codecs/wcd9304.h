@@ -116,6 +116,7 @@ struct sitar_mbhc_plug_type_cfg {
 	s16 v_av_max;
 	s16 v_hs_min;
 	s16 v_hs_max;
+	s16 v_omtp_max;
 	u16 reserved1;
 } __packed;
 

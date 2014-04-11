@@ -257,6 +257,16 @@ static int32_t msm_actuator_write_focus(
 	uint16_t damping_code_step = 0;
 	uint16_t wait_time = 0;
 
+	if (!a_ctrl) {
+		pr_err("%s: a_ctrl is NULL, aborting.\n", __func__);
+		return -EINVAL;
+	}
+
+	if (!damping_params) {
+		pr_err("%s: damping_params is NULL, aborting.\n", __func__);
+		return -EINVAL;
+	}
+
 	damping_code_step = damping_params->damping_step;
 	wait_time = damping_params->damping_delay;
 
@@ -323,14 +333,25 @@ static int32_t msm_actuator_move_focus(
 	struct msm_actuator_move_params_t *move_params)
 {
 	int32_t rc = 0;
-	int8_t sign_dir = move_params->sign_dir;
+	int8_t sign_dir;
 	uint16_t step_boundary = 0;
 	uint16_t target_step_pos = 0;
 	uint16_t target_lens_pos = 0;
-	int16_t dest_step_pos = move_params->dest_step_pos;
+	int16_t dest_step_pos;
 	uint16_t curr_lens_pos = 0;
-	int dir = move_params->dir;
-	int32_t num_steps = move_params->num_steps;
+	int dir;
+	int32_t num_steps;
+
+	if (!a_ctrl || !move_params) {
+		pr_err("%s: Invalid params, a_ctrl %p, move_params %p\n",
+				__func__, a_ctrl, move_params);
+		return -EINVAL;
+	}
+
+	sign_dir = move_params->sign_dir;
+	dest_step_pos = move_params->dest_step_pos;
+	dir = move_params->dir;
+	num_steps = move_params->num_steps;
 
 	CDBG("%s called, dir %d, num_steps %d\n",
 		__func__,
@@ -340,10 +361,32 @@ static int32_t msm_actuator_move_focus(
 	if (dest_step_pos == a_ctrl->curr_step_pos)
 		return rc;
 
+	if (!a_ctrl->step_position_table) {
+		pr_err("%s: NULL step_position_table\n", __func__);
+		return -EINVAL;
+	}
+
 	curr_lens_pos = a_ctrl->step_position_table[a_ctrl->curr_step_pos];
 	a_ctrl->i2c_tbl_index = 0;
 	CDBG("curr_step_pos =%d dest_step_pos =%d curr_lens_pos=%d\n",
 		a_ctrl->curr_step_pos, dest_step_pos, curr_lens_pos);
+
+	/* Check for NULL pointers before using the pointers */
+	if (!a_ctrl->region_params) {
+		pr_err("%s: region_params is NULL, aborting.\n", __func__);
+		return -EINVAL;
+	}
+
+	if (!a_ctrl->step_position_table) {
+		pr_err("%s: step_position_table is NULL, aborting.\n",
+								__func__);
+		return -EINVAL;
+	}
+
+	if (!move_params->ringing_params) {
+		pr_err("%s: ringing_params is NULL, aborting.\n", __func__);
+		return -EINVAL;
+	}
 
 	while (a_ctrl->curr_step_pos != dest_step_pos) {
 		step_boundary =
@@ -479,6 +522,12 @@ static int32_t msm_actuator_set_default_focus(
 {
 	int32_t rc = 0;
 	CDBG("%s called\n", __func__);
+
+	if (!a_ctrl || !move_params) {
+		pr_err("%s: Invalid params, a_ctrl %p, move_params %p\n",
+				__func__, a_ctrl, move_params);
+		return -EINVAL;
+	}
 
 	if (a_ctrl->curr_step_pos != 0)
 		rc = a_ctrl->func_tbl->actuator_move_focus(a_ctrl, move_params);
@@ -625,6 +674,12 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 {
 	struct msm_actuator_cfg_data cdata;
 	int32_t rc = 0;
+
+	if (!a_ctrl) {
+		pr_err("%s: a_ctrl pointer is NULL, aborting\n", __func__);
+		return -EINVAL;
+	}
+
 	if (copy_from_user(&cdata,
 		(void *)argp,
 		sizeof(struct msm_actuator_cfg_data)))
