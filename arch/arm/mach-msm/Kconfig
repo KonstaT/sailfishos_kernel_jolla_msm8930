@@ -2673,14 +2673,6 @@ config PANIC_LASTLOG_HOTKEY
 	  to trigger panic for logging
 # } Bright Lee, 20111202
 
-# Bright Lee, 20111215, redirect kmsg to android main log {
-config EMIT_KMSG_TO_MAINLOG
-	bool "Emit printk kmsg to android main log"
-	default n
-	help 
-	  also log kmsg in android main log for easily debug
-# } Bright Lee, 20111215
-
 # okpa, 20111227, save aboot log {
 config ABOOT_LOG
 	bool "Appsboot log"

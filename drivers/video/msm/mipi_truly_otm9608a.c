@@ -1941,8 +1941,13 @@ static void recovery_lcm(void)
 		return;
 	}
 
+	/* Avoid pixelation effect by blanking the screen while resetting */
+	led_wled_set_backlight(0);
+
 	/* power off LCM */
 	lcm_pwr_ctrl(0);
+	/* Let voltage settle for a short while */
+	msleep (50);
 	/* power on LCM */
 	lcm_pwr_ctrl(1);
 	/* LCM HW reset */
@@ -2003,6 +2008,9 @@ static void recovery_lcm(void)
 		mdp4_dsi_cmd_overlay_nolock(mfd_bkl);
 		mdp4_dsi_cmd_vsync_ctrl(mfd_bkl->fbi, 0);
 	}
+	/* 25ms sleep seems to be enough that reset artefacts have cleared */
+	msleep(25);
+	led_wled_set_backlight(mfd_bkl->bl_level);
 
 	LCD_PRINTK(0, "%s()--\n", __func__);
 }
@@ -2124,6 +2132,7 @@ module_param_call(recovery, recovery_lcm_param_set, param_get_long,
 static void lcm_recovery_timer_handler( struct work_struct *work )
 {
 	unsigned int pwrmode=0, pwrsignal=0;
+	int i = 0;
 
 	LCD_PRINTK(1, "%s +\n", __func__);
 
@@ -2134,9 +2143,19 @@ static void lcm_recovery_timer_handler( struct work_struct *work )
 
 	mutex_lock(&mfd_bkl->dma->ov_mutex);
 
-	/* read LCM power mode */
-	pwrmode = mipi_read_lcm_power_mode(mfd_bkl);
-	LCD_PRINTK(1, "[LCM] read power mode=0x%x\n", pwrmode);
+	/*
+	 * The power mode value is bit flaky, read 3 times to make sure the
+	 * power mode has really gone bad and not just temporarily twitching.
+	 */
+	for (i = 0; i < 3; i++) {
+		/* read LCM power mode */
+		pwrmode = mipi_read_lcm_power_mode(mfd_bkl);
+
+		if (pwrmode == 0x9C)
+			break;
+
+		msleep(1);
+	}
 
 	if(pwrmode!=0x9C)
 	{
@@ -2157,7 +2176,8 @@ static void lcm_recovery_timer_handler( struct work_struct *work )
 	}
 
 	mutex_unlock(&mfd_bkl->dma->ov_mutex);
-	queue_delayed_work(lcm_recovery_wq, &g_lcm_recovery_work, (5000 * HZ / 1000));
+	queue_delayed_work(lcm_recovery_wq, &g_lcm_recovery_work,
+							(10000 * HZ / 1000));
 
 	LCD_PRINTK(1, "%s -\n", __func__);
 }

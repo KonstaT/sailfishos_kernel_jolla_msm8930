@@ -71,7 +71,9 @@ static struct battery_ctrl {
   int status_ap;    //soc filter, AP get this status
 
   int uv;           //(adc) voltage now (uV)
+  int uv_old;       // Previous voltage
   int ua;           //(bms) current (mA)
+  int ua_old;       // Previous current
   int present;
   int temp;         //(bms) 0.1'c
 
@@ -134,7 +136,9 @@ static struct battery_ctrl {
   .health = POWER_SUPPLY_HEALTH_UNKNOWN,
   .status = POWER_SUPPLY_STATUS_UNKNOWN,
   .uv = 3800000,
+  .uv_old = 0,
   .ua = 0,
+  .ua_old = 0,
   .present = 1,
   .temp = 250,
   .soc_target = -1,
@@ -169,6 +173,9 @@ extern int bms_vbatt_avg_uv;
 extern int bms_r_sense_uohm;//Carl Chang, 20130626, add for calibration r_sense_uohm
 static int heartbeat_log_enable = 0;
 int chg_ibatmax_ma;//Carl Chang, 20130626, add for calibration r_sense_uohm
+
+static void update_uauv(int *ua, int *uv);
+
 //debug level
 static void batt_create_kernel_debuglevel(void)
 {
@@ -278,6 +285,9 @@ static int batt_soc_filter(void)
 void batt_update_work_status(void);
 static void batt_smart_log(void)
 {
+  int batt_iresistance;
+  int ua = 0, uv = 0, uv_delta, ua_delta;
+
   //update ?
   if((batt.soc_bms_old        != batt.soc_bms) ||
     (batt.soc_old             != batt.soc) ||
@@ -295,6 +305,17 @@ static void batt_smart_log(void)
       );
     //set next time
     batt.log_update_time = jiffies + 300 * HZ;  //300 sec
+    update_uauv(&ua, &uv);
+    uv_delta = abs(batt.uv_old - uv);
+    ua_delta = abs(ua - batt.ua_old);
+
+    if (uv_delta && ua_delta > 110000 && batt.uv_old && batt.ua_old) {
+        batt_iresistance = 1000 * uv_delta / ua_delta;
+        MSG2(" Internal R %d mOhm, I1:%duA I2:%duA V1:%duV V2:%duV",
+                         batt_iresistance, batt.ua_old, ua, batt.uv_old, uv);
+    }
+    batt.uv_old             = uv;
+    batt.ua_old             = ua;
   }
   //clear old
   batt.soc_bms_old        = batt.soc_bms;
@@ -2108,6 +2129,13 @@ static int get_prop_batt_current(struct pm8921_chg_chip *chip, int *curr)
 
 	batt.ua = *curr; //Eric Liu
 	return rc;
+}
+
+/* Simple function to update batt.uv and batt.ua at the same time */
+static void update_uauv(int *ua, int *uv)
+{
+	get_prop_batt_current(the_chip, ua);
+	*uv = get_prop_battery_uvolts(the_chip);
 }
 
 //Carl Chang+, add for Iavg

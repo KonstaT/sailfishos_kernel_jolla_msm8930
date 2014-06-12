@@ -42,14 +42,6 @@ static struct console ram_console = {
 	.index	= -1,
 };
 
-void ram_console_enable_console(int enabled)
-{
-	if (enabled)
-		ram_console.flags |= CON_ENABLED;
-	else
-		ram_console.flags &= ~CON_ENABLED;
-}
-
 static int __devinit ram_console_probe(struct platform_device *pdev)
 {
 	struct ram_console_platform_data *pdata = pdev->dev.platform_data;

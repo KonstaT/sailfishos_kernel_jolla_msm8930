@@ -401,6 +401,12 @@ int msm_camera_enable_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 			} else
 				j = i;
 
+			if (IS_ERR(reg_ptr[j])) {
+				pr_warn("%s: %s null regulator, skipping\n",
+				__func__, cam_vreg[j].reg_name);
+				continue;
+			}
+
       //Eric Liu+
       MSG2("%s, Off, %s, %dms",__func__,get_vreg_name(j),cam_vreg[j].delay);
       if(j == CAM_VANA_EXT)
@@ -432,6 +438,13 @@ disable_vreg:
 				continue;
 		} else
 			j = i;
+
+		if (IS_ERR(reg_ptr[j])) {
+			pr_warn("%s: %s null regulator, skipping\n",
+				__func__, cam_vreg[j].reg_name);
+			continue;
+		}
+
 		regulator_disable(reg_ptr[j]);
 		if (cam_vreg[j].delay > 20)
 			msleep(cam_vreg[j].delay);

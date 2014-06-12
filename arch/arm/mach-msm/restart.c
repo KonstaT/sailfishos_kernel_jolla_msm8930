@@ -138,7 +138,7 @@ static void *dload_mode_addr;
 
 /* Download mode master kill-switch */
 static int dload_set(const char *val, struct kernel_param *kp);
-static int download_mode = 1;
+static int download_mode = 0;
 module_param_call(download_mode, dload_set, param_get_int,
 			&download_mode, 0644);
 
@@ -322,19 +322,29 @@ static void msm_restart_prepare(const char *cmd)
 {
 #ifdef CONFIG_MSM_DLOAD_MODE
 
+	/* Bright Lee, 20140423, ramdump feature enabled only by qdlmode { */
+	#if 0
 	/* This looks like a normal reboot at this point. */
-	set_dload_mode(0);
+	set_dload_mode(download_mode);
+	#endif
+	/* } Bright Lee, 20140423 */
 
+	/* Bright Lee, 20140423, ramdump feature enabled only by qdlmode { */
 	/* Write download mode flags if we're panic'ing */
-	set_dload_mode(in_panic);
+	set_dload_mode(download_mode?in_panic:0);
+	/* } Bright Lee, 20140423 */
 
 	/* Write download mode flags if restart_mode says so */
 	if (restart_mode == RESTART_DLOAD)
 		set_dload_mode(1);
 
+	/* Bright Lee, 20140423, ramdump feature enabled only by qdlmode { */
+	#if 0
 	/* Kill download mode if master-kill switch is set */
 	if (!download_mode)
 		set_dload_mode(0);
+	#endif
+	/* } Bright Lee, 20140423 */
 #endif
 
 	pm8xxx_reset_pwr_off(1);
@@ -456,7 +466,11 @@ late_initcall(msm_pmic_restart_init);
 static int __init msm_restart_init(void)
 {
 #ifdef CONFIG_MSM_DLOAD_MODE
+	extern int ramdump_enabled;
 	atomic_notifier_chain_register(&panic_notifier_list, &panic_blk);
+	/* Bright Lee, 20140423, ramdump feature enabled only by qdlmode { */
+	download_mode = ramdump_enabled;
+	/* } Bright Lee, 20140423 */
 	dload_mode_addr = MSM_IMEM_BASE + DLOAD_MODE_ADDR;
 	set_dload_mode(download_mode);
 #endif

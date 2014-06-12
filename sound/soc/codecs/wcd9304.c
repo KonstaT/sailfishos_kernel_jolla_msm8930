@@ -55,7 +55,8 @@
 #define MBHC_FW_READ_ATTEMPTS 15
 #define MBHC_FW_READ_TIMEOUT 2000000
 
-#define SITAR_JACK_MASK (SND_JACK_HEADSET | SND_JACK_OC_HPHL | SND_JACK_OC_HPHR)
+#define SITAR_JACK_MASK (SND_JACK_HEADSET | SND_JACK_OC_HPHL | \
+			 SND_JACK_OC_HPHR | SND_JACK_UNSUPPORTED)
 
 #define SITAR_I2S_MASTER_MODE_MASK 0x08
 
@@ -4140,6 +4141,8 @@ static void sitar_codec_report_plug(struct snd_soc_codec *codec, int insertion,
 		else if (jack_type == SND_JACK_HEADSET) {
 			sitar->mbhc_polling_active = true;
 			sitar->current_plug = PLUG_TYPE_HEADSET;
+		} else if (jack_type & SND_JACK_UNSUPPORTED) {
+			sitar->current_plug = PLUG_TYPE_OMTP_HEADSET;
 		}
 		if (sitar->mbhc_cfg.headset_jack) {
 			sndprintk(SND_DLL_DEBUG, "%s: Reporting insertion %d\n", __func__,
@@ -4259,6 +4262,10 @@ void sitar_find_plug_and_report(struct snd_soc_codec *codec,
 		sitar->lpi_enabled = true;
 		/* TODO ::: sitar_codec_enable_hs_detect */
 		pr_err("%s(): High impedence hph not supported\n", __func__);
+	} else if (plug_type == PLUG_TYPE_OMTP_HEADSET) {
+		sitar_codec_report_plug(codec, 1, SND_JACK_HEADPHONE |
+							SND_JACK_UNSUPPORTED);
+		sitar_codec_cleanup_hs_polling(codec);
 	}
 }
 
@@ -4426,7 +4433,8 @@ static void sitar_codec_decide_gpio_plug(struct snd_soc_codec *codec)
 	} else if (plug_type[0] == PLUG_TYPE_OMTP_HEADSET) {
 		mbhc_debug_printk(SND_DLL_INFO, "%s: Valid plug found, determine plug type OMTP Headset\n",
 			 __func__);
-		sitar_codec_report_plug(codec, 1, SND_JACK_HEADPHONE);
+		sitar_codec_report_plug(codec, 1, SND_JACK_HEADPHONE |
+							SND_JACK_UNSUPPORTED);
 		sitar_schedule_hs_detect_plug(sitar);
 	}
     else if (plug_type[0] == PLUG_TYPE_HIGH_HPH)
@@ -4521,7 +4529,11 @@ static void sitar_hs_gpio_handler(struct snd_soc_codec *codec)
 		/* cancel detect plug */
 		sitar_cancel_hs_detect_plug(priv);
 
-		if (priv->current_plug == PLUG_TYPE_HEADPHONE) {
+		if (priv->current_plug == PLUG_TYPE_OMTP_HEADSET) {
+			sitar_codec_report_plug(codec, 0, SND_JACK_HEADPHONE |
+							SND_JACK_UNSUPPORTED);
+			is_removed = true;
+		} else if (priv->current_plug == PLUG_TYPE_HEADPHONE) {
 			sitar_codec_report_plug(codec, 0, SND_JACK_HEADPHONE);
 			is_removed = true;
 		} else if (priv->current_plug == PLUG_TYPE_HEADSET) {
