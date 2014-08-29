@@ -2715,6 +2715,19 @@ static int msm_open_config(struct inode *inode, struct file *fp)
 
 	D("%s: open %s\n", __func__, fp->f_path.dentry->d_name.name);
 
+	/* checking in case somebody just opens /dev/msm_camera/config* */
+	if(!config_cam)
+		return -ENODEV;
+
+	if(!g_server_dev.pcam_active[config_cam->dev_num])
+		return -ENODEV;
+
+	if(!g_server_dev.pcam_active[config_cam->dev_num]->mctl_handle)
+		return -ENODEV;
+
+	if(!g_server_dev.mctl[config_cam->dev_num].handle)
+		return -ENODEV;
+
 	rc = nonseekable_open(inode, fp);
 	if (rc < 0) {
 		pr_err("%s: nonseekable_open error %d\n", __func__, rc);

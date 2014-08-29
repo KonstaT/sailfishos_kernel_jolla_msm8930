@@ -179,7 +179,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings_lt1205[] =
     {0x3010, 0x80},
     {0x3082, 0x01},
     {0x30f4, 0x01},
-    {0x3090, 0x03},
+    {0x3090, 0x0b},// [3]:enable mirror
     {0x3091, 0xc0},
     {0x30ac, 0x42},
 
@@ -373,7 +373,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings_lt1205[] =
 
     //;BLC
     {0x3069, 0x86},
-    {0x307c, 0x10},
+    {0x307c, 0x11}, //[0]:enable flip
     {0x3087, 0x02},
 
     //;Other functions
@@ -441,7 +441,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings[] =
     {0x3010, 0x80},
     {0x3082, 0x01},
     {0x30f4, 0x01},
-    {0x3090, 0x03},
+    {0x3090, 0x0b}, //// [3]:enable mirror
     {0x3091, 0xc0},
     {0x30ac, 0x42},
 
@@ -635,7 +635,7 @@ static struct msm_camera_i2c_reg_conf ov2675_recommend_settings[] =
 
     //;BLC
     {0x3069, 0x86},
-    {0x307c, 0x10},
+    {0x307c, 0x11}, //[0]:enable flip
     {0x3087, 0x02},
 
     //;Other functions
