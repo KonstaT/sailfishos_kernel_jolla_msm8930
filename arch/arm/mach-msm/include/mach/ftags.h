@@ -12,6 +12,7 @@ enum {
 	LOGTYPE_RAW = 0,
 	LOGTYPE_ALOG,
 	LOGTYPE_PANIC_REASON,
+	LOGTYPE_KMSG,
 };
 
 typedef struct {

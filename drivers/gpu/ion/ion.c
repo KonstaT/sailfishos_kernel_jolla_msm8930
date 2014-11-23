@@ -502,7 +502,8 @@ void ion_free(struct ion_client *client, struct ion_handle *handle)
 {
 	bool valid_handle;
 
-	BUG_ON(client != handle->client);
+	/* WARN when the client and handle do not match. Used to be BUG */
+	WARN_ON(client != handle->client);
 
 	mutex_lock(&client->lock);
 	valid_handle = ion_handle_validate(client, handle);

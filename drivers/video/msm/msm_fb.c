@@ -1592,6 +1592,7 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 	{
 		led_wled_set_backlight(64); // 64/255: 25%
 		mfd->bl_level = 64;
+		backlight_led.brightness = 64;
 	}
 #endif
 

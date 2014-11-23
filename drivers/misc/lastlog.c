@@ -14,7 +14,7 @@
 #include <linux/debugfs.h>
 #include <linux/export.h>
 #include <linux/sched.h>
-
+#include <linux/printk.h>
 
 typedef struct
 {
@@ -98,7 +98,7 @@ static void lastlog_remove_proc_work(struct work_struct *work)
 
 
 
-static int lastlog_m_show(struct seq_file *s, void *v)
+static int lastlog_alog_m_show(struct seq_file *s, void *v)
 {
 	const char priority_chars[] = {'?', '?', 'V', 'D', 'I','W','E', 'F', 'S'};
 	struct logger_entry *entry = v;
@@ -144,7 +144,7 @@ err:
 
 
 
-static void *lastlog_m_start(struct seq_file *s, loff_t *pos)
+static void *lastlog_alog_m_start(struct seq_file *s, loff_t *pos)
 {
 	log_info *pdata = (log_info *)s->private;
 	char *buffer_start;
@@ -187,7 +187,7 @@ static void *lastlog_m_start(struct seq_file *s, loff_t *pos)
 
 
 
-static void *lastlog_m_next(struct seq_file *s, void *v, loff_t *pos)
+static void *lastlog_alog_m_next(struct seq_file *s, void *v, loff_t *pos)
 {
 	log_info *pdata = (log_info *)s->private;
 	char *buffer_start = v;
@@ -223,26 +223,26 @@ static void *lastlog_m_next(struct seq_file *s, void *v, loff_t *pos)
 
 
 
-static void lastlog_m_stop(struct seq_file *swap, void *v)
+static void lastlog_alog_m_stop(struct seq_file *swap, void *v)
 {
 }
 
 
 
-static const struct seq_operations lastlog_ops = {
-	.start =	lastlog_m_start,
-	.next =		lastlog_m_next,
-	.stop =		lastlog_m_stop,
-	.show =		lastlog_m_show,
+static const struct seq_operations lastlog_alog_ops = {
+	.start =	lastlog_alog_m_start,
+	.next =		lastlog_alog_m_next,
+	.stop =		lastlog_alog_m_stop,
+	.show =		lastlog_alog_m_show,
 };
 
 
-static int lastlog_open(struct inode *inode, struct file *file)
+static int lastlog_alog_open(struct inode *inode, struct file *file)
 {
 	int ret;
 	struct proc_dir_entry *pde = PDE(inode);
 
-	ret = seq_open (file, &lastlog_ops);
+	ret = seq_open (file, &lastlog_alog_ops);
 
 	if (!ret)
 		((struct seq_file *)file->private_data)->private = pde->data;
@@ -253,11 +253,138 @@ static int lastlog_open(struct inode *inode, struct file *file)
 
 
 
-static const struct file_operations proc_lastlog_operations = {
-	.open		= lastlog_open,
+static const struct file_operations proc_lastlog_alog_operations = {
+	.open		= lastlog_alog_open,
 	.read		= seq_read,
 	.release	= seq_release,
 };
+
+static char *kmsg_buffer = NULL;
+static int lastlog_kmsg_m_show(struct seq_file *s, void *v)
+{
+	size_t n;
+	int retval;
+
+	if (kmsg_buffer == NULL) {
+		kmsg_buffer = kmalloc (1024, GFP_KERNEL);
+		if (kmsg_buffer == NULL) {
+			return -1;
+		}
+	}
+
+	n = lastlog_msg_to_text (v, kmsg_buffer, 1024);
+
+	retval = seq_write (s, kmsg_buffer, n);
+
+	if (retval != 0)
+		return -1;
+
+	return 0;
+}
+
+
+
+static void *lastlog_kmsg_m_start(struct seq_file *s, loff_t *pos)
+{
+	log_info *pdata = (log_info *)s->private;
+	char *buffer_start;
+	loff_t l = *pos;
+	void *msg;
+
+	if (pdata->end_pos != 0 && l >= pdata->end_pos) {
+		return NULL;
+	}
+
+	buffer_start = &lastlog_buffer[pdata->offset];
+
+	/* pos may be plus one by end of seq_read, but struct log always align with 4 bytes */
+	if (l == 0) {/* first call to m_start */
+		return buffer_start;
+	}
+
+	if (l & 0x1) {
+		l--;
+	}
+
+	msg = &buffer_start[l];
+
+	if (lastlog_msg_len(msg) == 0 || l >= pdata->size) {
+		pdata->end_pos = l;
+		return NULL;
+	}
+
+	l = l + lastlog_msg_len(msg);
+	*pos = l;
+
+	return &buffer_start[*pos];
+}
+
+
+static void *lastlog_kmsg_m_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	log_info *pdata = (log_info *)s->private;
+	char *buffer_start = v;
+	loff_t l = *pos;
+	void *msg;
+
+	if (pdata->end_pos != 0 && l >= pdata->end_pos) {
+		return NULL;
+	}
+
+	msg = &buffer_start[0];
+	*pos = l + lastlog_msg_len(msg);
+
+	msg = &buffer_start[lastlog_msg_len(msg)];
+
+	if (lastlog_msg_len(msg) == 0) {
+		pdata->end_pos = l;
+		return NULL;
+	}
+
+	return msg;
+}
+
+
+
+static void lastlog_kmsg_m_stop(struct seq_file *swap, void *v)
+{
+	kfree (kmsg_buffer);
+	kmsg_buffer = NULL;
+}
+
+
+
+static const struct seq_operations lastlog_kmsg_ops = {
+	.start =	lastlog_kmsg_m_start,
+	.next =		lastlog_kmsg_m_next,
+	.stop =		lastlog_kmsg_m_stop,
+	.show =		lastlog_kmsg_m_show,
+};
+
+
+static int lastlog_kmsg_open(struct inode *inode, struct file *file)
+{
+	int ret;
+	struct proc_dir_entry *pde = PDE(inode);
+
+	ret = seq_open (file, &lastlog_kmsg_ops);
+
+	if (!ret)
+		((struct seq_file *)file->private_data)->private = pde->data;
+
+
+	return ret;
+}
+
+
+
+static const struct file_operations proc_lastlog_kmsg_operations = {
+	.open		= lastlog_kmsg_open,
+	.read		= seq_read,
+	.release	= seq_release,
+};
+
+
 
 /* Bright Lee, 20120210, show version with lastlog { */
 static int proc_show_sw_version(char *page, char **start, off_t off, int count, int *eof, void *data)
@@ -308,7 +435,8 @@ static int __init proc_lastlog_init(void)
 		panic_logs_ptr ++;
 	}
 	offset = (int)panic_logs_ptr - (int)lastlog_buffer;
-	for (panic_logs_ptr = (panic_log_struct *)lastlog_buffer; panic_logs_ptr->magic == PANIC_LOG_MAGIC; panic_logs_ptr ++) {
+	for (panic_logs_ptr = (panic_log_struct *)lastlog_buffer;
+		panic_logs_ptr->magic == PANIC_LOG_MAGIC; panic_logs_ptr ++) {
 		if (panic_logs_ptr->type == LOGTYPE_PANIC_REASON) {
 			unsigned int *address;
 			address = (unsigned int *)&lastlog_buffer[offset];
@@ -330,7 +458,8 @@ static int __init proc_lastlog_init(void)
 					pdata->size--;
 				}
 				/* } Bright Lee, 20120209 */
-				pe = create_proc_entry(panic_logs_ptr->name, S_IRUGO | S_IWUGO, proc_dentry); // TODO chgrp log && chmod 0660 is better than chmod 0666
+				// TODO chgrp log && chmod 0660 is better than chmod 0666
+				pe = create_proc_entry(panic_logs_ptr->name, S_IRUGO | S_IWUGO, proc_dentry);
 				if (pe) {
 					pe->read_proc = proc_lastlog_read;
 					pe->write_proc = proc_lastlog_write;
@@ -339,19 +468,23 @@ static int __init proc_lastlog_init(void)
 
 				/* Bright Lee, 20120209, create last_kmsg for dumpstate { */
 				if (!strcmp("kmsg", panic_logs_ptr->name)) {
-					pe = create_proc_entry("last_kmsg", S_IRUGO | S_IWUGO, NULL);
-					if (pe) {
-						pe->read_proc = proc_lastlog_read;
-						pe->write_proc = proc_lastlog_write;
-						pe->data = pdata;
-					}
 				}
 				if (!strcmp("tzbsp_dump", panic_logs_ptr->name)) {
 					panic_caller = (int)&watchdog;
 				}
 				/* } Bright Lee, 20120209 */
 			} else if (panic_logs_ptr->type == LOGTYPE_ALOG) {
-				proc_create_data(panic_logs_ptr->name, S_IRUGO | S_IWUGO, proc_dentry, &proc_lastlog_operations, pdata);
+				proc_create_data(panic_logs_ptr->name, S_IRUGO | S_IWUGO, proc_dentry,
+					&proc_lastlog_alog_operations, pdata);
+			} else if (panic_logs_ptr->type == LOGTYPE_KMSG) {
+				proc_create_data(panic_logs_ptr->name, S_IRUGO | S_IWUGO, proc_dentry,
+					&proc_lastlog_kmsg_operations, pdata);
+				pe = create_proc_entry("last_kmsg", S_IRUGO | S_IWUGO, NULL);
+				if (pe) {
+					pe->read_proc = proc_lastlog_read;
+					pe->write_proc = proc_lastlog_write;
+					pe->data = pdata;
+				}
 			} else {
 				printk (KERN_ERR "%s not support logtype: %d\n", __func__, panic_logs_ptr->type);
 			}

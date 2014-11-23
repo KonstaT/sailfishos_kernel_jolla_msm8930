@@ -329,4 +329,10 @@ static inline void print_hex_dump_bytes(const char *prefix_str, int prefix_type,
 
 #endif
 
+/* Bright Lee, 20140620 { */
+#ifdef CONFIG_PANIC_LASTLOG
+size_t lastlog_msg_to_text(const void *msg, char *buf, size_t size);
+u16 lastlog_msg_len(void *log);
+#endif
+/* } Bright Lee, 20140620 */
 #endif

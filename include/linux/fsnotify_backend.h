@@ -142,7 +142,7 @@ struct fsnotify_group {
 	unsigned int priority;
 
 	/* stores all fastpath marks assoc with this group so they can be cleaned on unregister */
-	struct mutex mark_mutex;	/* protect marks_list */
+	spinlock_t mark_lock;		/* protect marks_list */
 	atomic_t num_marks;		/* 1 for each mark and 1 for not being
 					 * past the point of no return when freeing
 					 * a group */
@@ -289,6 +289,7 @@ struct fsnotify_mark {
 		struct fsnotify_inode_mark i;
 		struct fsnotify_vfsmount_mark m;
 	};
+	struct list_head free_g_list;	/* tmp list used when freeing this mark */
 	__u32 ignored_mask;		/* events types to ignore */
 #define FSNOTIFY_MARK_FLAG_INODE		0x01
 #define FSNOTIFY_MARK_FLAG_VFSMOUNT		0x02
@@ -411,13 +412,8 @@ extern void fsnotify_set_mark_mask_locked(struct fsnotify_mark *mark, __u32 mask
 /* attach the mark to both the group and the inode */
 extern int fsnotify_add_mark(struct fsnotify_mark *mark, struct fsnotify_group *group,
 			     struct inode *inode, struct vfsmount *mnt, int allow_dups);
-extern int fsnotify_add_mark_locked(struct fsnotify_mark *mark, struct fsnotify_group *group,
-				    struct inode *inode, struct vfsmount *mnt, int allow_dups);
-/* given a group and a mark, flag mark to be freed when all references are dropped */
-extern void fsnotify_destroy_mark(struct fsnotify_mark *mark,
-				  struct fsnotify_group *group);
-extern void fsnotify_destroy_mark_locked(struct fsnotify_mark *mark,
-					 struct fsnotify_group *group);
+/* given a mark, flag it to be freed when all references are dropped */
+extern void fsnotify_destroy_mark(struct fsnotify_mark *mark);
 /* run all the marks in a group, and clear all of the vfsmount marks */
 extern void fsnotify_clear_vfsmount_marks_by_group(struct fsnotify_group *group);
 /* run all the marks in a group, and clear all of the inode marks */

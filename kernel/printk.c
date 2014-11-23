@@ -361,7 +361,7 @@ static void log_store(int facility, int level,
 /* Bright Lee, 20111122, reboot log { */
 #ifdef CONFIG_PANIC_LASTLOG
 #include <mach/ftags.h>
-PANIC_LOG_INIT(kmsg, "kmsg", __log_buf, LOGTYPE_RAW);
+PANIC_LOG_INIT(kmsg, "kmsg", __log_buf, LOGTYPE_KMSG);
 #endif
 /* } Bright Lee, 20111122 */
 
@@ -909,6 +909,27 @@ static size_t msg_print_text(const struct log *msg, enum log_flags prev,
 
 	return len;
 }
+
+/* Bright Lee, 20140620, export function for lastlog { */
+#ifdef CONFIG_PANIC_LASTLOG
+size_t lastlog_msg_to_text(const void *log, char *buf, size_t size)
+{
+	static enum log_flags flags = 0;
+	size_t n;
+	const struct log *msg = (const struct log *)log;
+
+	flags = msg->flags;
+	n = msg_print_text(msg, flags, false, buf, size);
+	return n;
+}
+
+u16 lastlog_msg_len(void *log)
+{
+	struct log *msg = log;
+	return msg->len;
+}
+#endif
+/* } Bright Lee, 20140620 */
 
 static int syslog_print(char __user *buf, int size)
 {

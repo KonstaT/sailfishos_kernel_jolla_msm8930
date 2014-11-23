@@ -2333,7 +2333,7 @@ static int pm_batt_power_get_property(struct power_supply *psy,
 				       enum power_supply_property psp,
 				       union power_supply_propval *val)
 {
-	int rc = 0;
+	int rc = 0, rc1 = 0;
 	int value;
 	struct pm8921_chg_chip *chip = container_of(psy, struct pm8921_chg_chip,
 								batt_psy);
@@ -2522,9 +2522,14 @@ static int pm_batt_power_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_ENERGY_NOW:
 		/* convert capacity to energy */
+		rc = get_prop_batt_fcc(chip);
+		if (rc >= 0) {
+                        rc1 = rc * 38/10;
+                        rc = 0;
+                }
 		rc = get_prop_batt_capacity(chip);
 		if (rc >= 0) {
-			val->intval = rc * 7980000 / 100;
+			val->intval = rc * rc1 / 100;
 			rc = 0;
 		}
 		break;
