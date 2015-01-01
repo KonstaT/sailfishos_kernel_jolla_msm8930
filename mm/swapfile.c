@@ -31,6 +31,7 @@
 #include <linux/memcontrol.h>
 #include <linux/poll.h>
 #include <linux/oom.h>
+#include <linux/export.h>
 
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
@@ -2160,6 +2161,8 @@ out:
 		mutex_unlock(&inode->i_mutex);
 	return error;
 }
+
+EXPORT_SYMBOL_GPL(si_swapinfo);
 
 void si_swapinfo(struct sysinfo *val)
 {

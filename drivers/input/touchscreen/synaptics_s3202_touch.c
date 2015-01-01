@@ -4047,7 +4047,6 @@ static void synaptics_early_suspend(struct early_suspend *handler)
 		if (rc < 0) {
 			SYNAPTICS_PRINTK(0, "Failed to read interrupt status[0x%x]:0x%x (rc=%d)\n",
 					 g_tp->pdt_map.F01_data_base+1, inrt_status, rc);
-			return;
 		}
 		SYNAPTICS_PRINTK(0, "isr status = %x\n",inrt_status);
 		msleep(20);
@@ -4055,7 +4054,6 @@ static void synaptics_early_suspend(struct early_suspend *handler)
 		if (rc < 0) {
 			SYNAPTICS_PRINTK(0, "Failed to read interrupt status[0x%x]:0x%x (rc=%d)\n",
 					 g_tp->pdt_map.F01_data_base+1, inrt_status, rc);
-			return;
 		}
 		SYNAPTICS_PRINTK(0, "isr status = %x\n", inrt_status);
 	}

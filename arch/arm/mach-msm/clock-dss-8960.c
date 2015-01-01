@@ -181,7 +181,7 @@ int hdmi_pll_enable(void)
 		writel_relaxed(ahb_en_reg & ~BIT(4), AHB_EN_REG);
 
 	if (!pll_lock_retry) {
-		pr_err("%s: HDMI PLL not locked\n", __func__);
+		pr_debug("%s: HDMI PLL not locked\n", __func__);
 		hdmi_pll_disable();
 		return -EAGAIN;
 	}

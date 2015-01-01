@@ -108,7 +108,9 @@ static int msm_dai_q6_hdmi_hw_params(struct snd_pcm_substream *substream,
 		sample_rate = HDMI_SAMPLE_RATE_32KHZ;
 		break;
 	}
+#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
 	hdmi_msm_audio_sample_rate_reset(sample_rate);
+#endif
 
 	switch (dai_data->channels) {
 	case 2:

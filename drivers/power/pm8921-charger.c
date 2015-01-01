@@ -2057,6 +2057,7 @@ static int get_prop_batt_status(struct pm8921_chg_chip *chip)
 static int get_prop_batt_capacity(struct pm8921_chg_chip *chip)
 {
 	int percent_soc;
+	static int old_soc = 0;
 
 	if (chip->battery_less_hardware)
 		return 100;
@@ -2075,9 +2076,14 @@ static int get_prop_batt_capacity(struct pm8921_chg_chip *chip)
 	}
 
 	if (percent_soc <= 10)
-		pr_warn_ratelimited("low battery charge = %d%%\n",
+	{
+		if(old_soc != percent_soc)
+		{
+			old_soc = percent_soc;
+			pr_warn_ratelimited("low battery charge = %d%%\n",
 						percent_soc);
-
+		}
+	}
 	//Eric Liu+
 	batt.soc_bms = percent_soc;
 	percent_soc = batt_soc_filter();

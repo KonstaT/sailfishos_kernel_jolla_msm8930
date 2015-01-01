@@ -1,0 +1,89 @@
+#!/bin/sh
+
+# Jolla btrfs root mounting script
+#
+# Copyright (C) 2014 Jolla Ltd.
+# Contact: Kalle Jokiniemi <kalle.jokiniemi@jolla.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+ROOTDEV="/dev/mmcblk0p28"
+
+pwr_key_wait()
+{
+while true; do
+	key=$(/sbin/evkey -d -t 3000 /dev/input/event3)
+
+	if [ "x${key}" == "x116" ]; then
+		key=null
+		key=$(/sbin/evkey -u -t 2000 /dev/input/event3)
+
+		if ! [ "x${key}" == "x116" ]; then
+			# Turn on RED led
+			echo 255 > /sys/class/leds/led:rgb_red/brightness
+			# Kill UI process
+			kill $1
+			# Let user see the red LED for couple of seconds.
+			sleep 2
+			# clear any pending RTC wake up so we don't wake up
+			rtc-clear
+
+			poweroff -f
+		fi
+	fi
+done
+}
+
+
+if [ -z $1 ] || [ ! -e $1 ]; then
+	echo "Please pass mount point as parameter!"
+	exit 1
+fi
+
+if mount -t btrfs -o recovery $ROOTDEV $1; then
+	echo "Root mounted"
+	exit 0
+fi
+
+# Let's try clear_cache before showing "recovery UI" to user
+if mount -t btrfs -o recovery,nospace_cache,clear_cache,autodefrag $ROOTDEV $1; then
+	echo "x-no-time-stamp Startup:  Root mounted with clear_cache recovery option" >> $1/var/log/systemboot.log
+	exit 0
+fi
+
+yamui -a 1100 -t "Recovering file system, please do not power off" \
+	animation-recover-001 animation-recover-002 animation-recover-003 \
+	animation-recover-004 animation-recover-005 animation-recover-006 \
+	animation-recover-007 animation-recover-008 &
+
+UI_PID=$!
+
+if /sbin/btrfs-mount-repair $ROOTDEV $1; then
+	echo "x-no-time-stamp Startup:  Repaired root filesystem" >> $1/var/log/systemboot.log
+	kill $UI_PID
+	exit 0
+fi
+# Failed to mount
+kill $UI_PID
+
+yamui -t "Filesystem recovery failed. Please seek service." &
+
+UI_PID=$!
+# Wait for user to shut down device via power key...
+pwr_key_wait $UI_PID
+
+# We should not get here ever..
+exit 1
+

@@ -1156,7 +1156,7 @@ static int diagchar_write(struct file *file, const char __user *buf,
 
 	diag_printk(1,"diag:%s Already used bytes in buffer %d, and"
 	" incoming payload size is %d\n",__func__, driver->used, payload_size);
-	printk(KERN_DEBUG "hdlc encoded data is -->\n");
+	diag_printk(1, "hdlc encoded data is -->\n");
 	for (i = 0; i < payload_size + 8; i++) {
 		diag_printk(1, "\t %x \t", *(((unsigned char *)buf_hdlc)+i));
 		if (*(((unsigned char *)buf_hdlc)+i) != 0x7e)

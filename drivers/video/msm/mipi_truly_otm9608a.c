@@ -2318,7 +2318,6 @@ static int mipi_truly_otm9608a_lcd_on(struct platform_device *pdev)
 	queue_delayed_work(lcm_recovery_wq, &g_lcm_recovery_work, (1000 * HZ / 1000));
 #endif
 
-	LCD_PRINTK(0, "%s()--\n", __func__);
 	return 0;
 }
 

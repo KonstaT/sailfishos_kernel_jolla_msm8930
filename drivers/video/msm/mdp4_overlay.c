@@ -129,9 +129,12 @@ void  mdp4_overlay_free_base_pipe(struct msm_fb_data_type *mfd)
 			mdp4_dsi_cmd_free_base_pipe(mfd);
 		else if (ctrl->panel_mode & MDP4_PANEL_LCDC)
 			mdp4_lcdc_free_base_pipe(mfd);
-	} else if (hdmi_prim_display || mfd->index == 1) {
+	}
+#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
+	else if (hdmi_prim_display || mfd->index == 1) {
 		mdp4_dtv_free_base_pipe(mfd);
 	}
+#endif
 }
 
 static struct ion_client *display_iclient;

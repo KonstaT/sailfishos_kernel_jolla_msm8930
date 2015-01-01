@@ -4843,6 +4843,8 @@ static int __init hdmi_msm_init(void)
 
 #ifdef CONFIG_FB_MSM_HDMI_AS_PRIMARY
 	hdmi_prim_display = 1;
+#else
+	hdmi_prim_display = 0;
 #endif
 
 	hdmi_msm_setup_video_mode_lut();

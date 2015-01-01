@@ -23,6 +23,8 @@
 #include <linux/platform_device.h>
 #include <linux/memory.h>
 #include <linux/slab.h>
+#include <linux/kobject.h>
+#include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/i2c.h>
 #include <linux/i2c/at24.h>
@@ -32,6 +34,8 @@
 #define TOH_NAME		"toh-core"
 #define TOH_EEPROM_FIXED_DATA	0x30
 #define TOH_EEPROM_ENTRIES	8
+#define TOH_EEPROM_DETECT_RETRY	4
+#define TOH_EEPROM_DETECT_DELAY	75
 #define TOH_DATA_ENTRIES	1
 #define TOH_SYSFS_ENTRIES	(TOH_EEPROM_ENTRIES + TOH_DATA_ENTRIES)
 
@@ -266,6 +270,8 @@ static int toh_sysfs_create(struct toh_data *toh)
 		goto toh_sysfs_clean;
 	}
 
+	kobject_uevent(&toh->dev->kobj, KOBJ_ADD);
+
 	return 0;
 
 toh_sysfs_clean:
@@ -310,6 +316,7 @@ static int __devinit toh_probe(struct platform_device *pdev)
 	ssize_t count = 0;
 	int ret = 0;
 	char buf;
+	int retries;
 
 	toh->i2c_bus = pdata->i2c_bus;
 	toh->eeprom = toh_eeprom;
@@ -348,7 +355,12 @@ static int __devinit toh_probe(struct platform_device *pdev)
 	}
 
 	/* Test if the eeprom is really readable / present on the cover */
-	count = toh_eeprom_read(toh, &buf, 1, 1);
+	retries =  TOH_EEPROM_DETECT_RETRY;
+	while (retries && count <= 0) {
+		msleep(TOH_EEPROM_DETECT_DELAY);
+		count = toh_eeprom_read(toh, &buf, 1, 1);
+		retries--;
+	}
 
 	regulator_disable(toh->vdd);
 

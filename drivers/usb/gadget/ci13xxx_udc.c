@@ -391,7 +391,7 @@ static int hw_device_reset(struct ci13xxx *udc)
  */
 static int hw_device_state(u32 dma)
 {
-	udc_printk(1,"USB::udc %s enable/disable interrupt %d\n",__func__,dma);
+	udc_printk(3,"USB::udc %s enable/disable interrupt %d\n",__func__,dma);
 	if (dma) {
 		hw_cwrite(CAP_ENDPTLISTADDR, ~0, dma);
 		/* interrupt, error, port change, reset, sleep/suspend */
@@ -2667,12 +2667,12 @@ __acquires(udc->lock)
 			if (err)
 				break;
 			err = isr_setup_status_phase(udc);
-			udc_printk(0,"USB::udc %s usb state-->addressed err=%d\n",__func__,err);
+			udc_printk(3,"USB::udc %s usb state-->addressed err=%d\n",__func__,err);
 			break;
 		case USB_REQ_SET_CONFIGURATION:
 			if (type == (USB_DIR_OUT|USB_TYPE_STANDARD))
 				udc->configured = !!req.wValue;
-			udc_printk(0,"USB::udc %s usb state-->configured %d\n",__func__,udc->configured);
+			udc_printk(3,"USB::udc %s usb state-->configured %d\n",__func__,udc->configured);
 			goto delegate;
 		case USB_REQ_SET_FEATURE:
 			if (type == (USB_DIR_OUT|USB_RECIP_ENDPOINT) &&
@@ -3562,7 +3562,7 @@ static irqreturn_t udc_irq(void)
 			isr_statistics.uri++;
 			isr_reset_handler(udc);
 			udc->gadget.enumeration = 1;
-			udc_printk(0,"USB::udc %s usb rest\n",__func__);
+			udc_printk(3,"USB::udc %s usb rest\n",__func__);
 		}
 		if (USBi_PCI & intr) {
 			isr_statistics.pci++;
@@ -3578,7 +3578,7 @@ static irqreturn_t udc_irq(void)
 		if (USBi_SLI & intr) {
 			isr_suspend_handler(udc);
 			isr_statistics.sli++;
-			udc_printk(0,"USB::udc %s USB suspend state\n",__func__);
+			udc_printk(3,"USB::udc %s USB suspend state\n",__func__);
 		}
 		retval = IRQ_HANDLED;
 	} else {
