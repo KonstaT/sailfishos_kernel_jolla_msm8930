@@ -2217,6 +2217,7 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 	struct btrfs_delayed_ref_node *ref;
 	struct btrfs_delayed_ref_head *locked_ref = NULL;
 	struct btrfs_delayed_extent_op *extent_op;
+	struct btrfs_fs_info *fs_info = root->fs_info;
 	int ret;
 	int count = 0;
 	int must_insert_reserved = 0;
@@ -2247,6 +2248,16 @@ static noinline int run_clustered_refs(struct btrfs_trans_handle *trans,
 				continue;
 			}
 		}
+
+		/*
+		 * We need to try and merge add/drops of the same ref since we
+		 * can run into issues with relocate dropping the implicit ref
+		 * and then it being added back again before the drop can
+		 * finish.  If we merged anything we need to re-loop so we can
+		 * get a good ref.
+		 */
+		btrfs_merge_delayed_refs(trans, fs_info, delayed_refs,
+					 locked_ref);
 
 		/*
 		 * locked_ref is the head node, so we have to go one
