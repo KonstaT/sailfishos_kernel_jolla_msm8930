@@ -924,7 +924,7 @@ static int msm_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 	}
 	if (mc == SLIM_USR_MC_GENERIC_ACK) {
 		u32 mgrstat = readl_relaxed(dev->base + MGR_STATUS);
-		pr_err("generic ack:0x %x, mgrstat:0x%x", pbuf[0], mgrstat);
+		pr_debug("generic ack:0x %x, mgrstat:0x%x", pbuf[0], mgrstat);
 	}
 	mutex_unlock(&dev->tx_lock);
 	if (msgv >= 0)
@@ -1098,7 +1098,7 @@ static int msm_sat_define_ch(struct msm_slim_sat *sat, u8 *buf, u8 len, u8 mc)
 		/* part of grp. activating/removing 1 will take care of rest */
 		ret = slim_control_ch(&sat->satcl, sat->satch[i].chanh, oper,
 					false);
-		pr_err("SAT oper:%d grp start:%d, ret:%d", oper,
+		pr_debug("SAT oper:%d grp start:%d, ret:%d", oper,
 				sat->satch[i].chan, ret);
 		if (!ret) {
 			for (i = 5; i < len; i++) {
@@ -1187,7 +1187,7 @@ static int msm_sat_define_ch(struct msm_slim_sat *sat, u8 *buf, u8 len, u8 mc)
 			ret = slim_control_ch(&sat->satcl,
 					chh[0],
 					SLIM_CH_ACTIVATE, false);
-			pr_err("SAT activate grp start: ret:%d", ret);
+			pr_debug("SAT activate grp start: ret:%d", ret);
 		}
 	}
 	return ret;
@@ -1306,11 +1306,11 @@ static void slim_sat_rxprocess(struct work_struct *work)
 			 * when this is detected
 			 */
 			if (sat->sent_capability) {
-				pr_err("Received report present from SAT:0x%x",
+				pr_debug("Received report present from SAT:0x%x",
 						sat->satcl.laddr);
 				for (i = 0; i < sat->nsatch; i++) {
 					if (sat->satch[i].reconf) {
-						pr_err("SSR, sat:%d, rm ch:%d",
+						pr_debug("SSR, sat:%d, rm ch:%d",
 							sat->satcl.laddr,
 							sat->satch[i].chan);
 						slim_control_ch(&sat->satcl,
@@ -1417,7 +1417,7 @@ send_capability:
 		case SLIM_USR_MC_RECONFIG_NOW:
 			tid = buf[3];
 			gen_ack = true;
-			pr_err("SAT:LA:%x reconf req", sat->satcl.laddr);
+			pr_debug("SAT:LA:%x reconf req", sat->satcl.laddr);
 			ret = slim_reconfigure_now(&sat->satcl);
 			for (i = 0; i < sat->nsatch; i++) {
 				struct msm_sat_chan *sch = &sat->satch[i];
@@ -1465,7 +1465,7 @@ send_capability:
 			txn.len = 2;
 			txn.wbuf = wbuf;
 			gen_ack = true;
-			pr_err("SAT connect MC:0x%x,LA:0x%x", txn.mc,
+			pr_debug("SAT connect MC:0x%x,LA:0x%x", txn.mc,
 					sat->satcl.laddr);
 			ret = msm_xfer_msg(&dev->ctrl, &txn);
 			break;
@@ -1479,7 +1479,7 @@ send_capability:
 			txn.mt = SLIM_MSG_MT_CORE;
 			txn.wbuf = wbuf;
 			gen_ack = true;
-			pr_err("SAT disconnect LA:0x%x", sat->satcl.laddr);
+			pr_debug("SAT disconnect LA:0x%x", sat->satcl.laddr);
 			ret = msm_xfer_msg(&dev->ctrl, &txn);
 		default:
 			break;
