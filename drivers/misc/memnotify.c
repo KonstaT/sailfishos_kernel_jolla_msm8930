@@ -67,6 +67,8 @@ static const char * const memtypes[] = {
 	"used",
 	"active",
 	"total",
+	"swap_total",
+	"swap_free"
 };
 #define MN_TYPES_SIZE		(ARRAY_SIZE(memtypes))
 #define MN_LINE_BUFFER_SIZE	(MN_TYPES_SIZE * 32)
@@ -120,9 +122,9 @@ static unsigned long max_update_period_jiffies __read_mostly;
 static unsigned      update_space_pages        __read_mostly;
 
 /* Memory values which is used in measurements and notification */
-static unsigned long available_pages      __read_mostly;
+static unsigned long available_pages;
 #ifdef CONFIG_SWAP
-static unsigned long available_swap_pages __read_mostly;
+static unsigned long available_swap_pages;
 #endif
 
 /* Amount of memory measured and notified last time */
@@ -206,6 +208,17 @@ static inline bool validate_observer(
 /* Please update this function if contents memtypes is changed */
 static inline void get_memory_status(struct memvalue *value)
 {
+	struct sysinfo si;
+
+	si_meminfo(&si);
+#ifdef CONFIG_SWAP
+	si_swapinfo(&si);
+	available_pages = si.totalram + si.totalswap;
+	available_swap_pages = si.totalswap;
+#else
+	available_pages = si.totalram;
+#endif
+
 	/* field #0 -- used memory by substracting free memories */
 	value->v[0] = available_pages;
 
@@ -218,8 +231,6 @@ static inline void get_memory_status(struct memvalue *value)
 #ifdef CONFIG_SWAP
 	/* Swap if we have */
 	if (available_swap_pages) {
-		struct sysinfo si;
-		si_swapinfo(&si);
 		value->v[0] -= si.freeswap;
 	}
 #endif
@@ -230,6 +241,17 @@ static inline void get_memory_status(struct memvalue *value)
 
 	/* field #2 -- total available pages */
 	value->v[2] = available_pages;
+
+#ifdef CONFIG_SWAP
+	/* field #3 -- total swap */
+	value->v[3] = si.totalswap;
+
+	/* field #4 -- used swap */
+	value->v[4] = si.freeswap;
+#else
+	value->v[3] = 0;
+	value->v[4] = 0;
+#endif
 }
 
 /* this method invoked from timer to re-check statistics */

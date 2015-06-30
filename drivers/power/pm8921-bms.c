@@ -3052,6 +3052,16 @@ static int adjust_soc(struct pm8921_bms_chip *chip, int soc,
 	if (soc_new == 0 && soc_est != 0)
 		soc_new = 1;
 
+	/* if soc delta is bigger than 10, keep the old value. Temporary voltage drops
+	   should not affect the soc value as it can show the wrong info to the user.
+	   10% drop between soc updates would mean the device is consuming more power
+	   than the battery would be capable of delivering, and having the device produce
+	   magic smoke */
+	if ((soc - soc_new) > 10) {
+		if (soc > 1)
+		     soc--;
+		goto out;
+	}
 	soc = soc_new;
 
 out:
