@@ -459,9 +459,9 @@ static int taos_get_lux(struct tsl2772_chip *chip)
 			lux = 0;
 			goto exit;
 		} else if (c0 >= sat) {
-			dev_dbg(dev, "%s: saturation, keep lux\n", __func__);
-			lux = chip->als_inf.lux;
-			goto exit;
+			dev_dbg(dev, "%s: saturation to %u\n", __func__, sat);
+			c0 = min_t(u32, MAX_ALS_VALUE, sat);
+			c1 = 0;
 		}
 	} else {							//chip->als_gain_auto = "AUTO" = 非零 則切換 gain
 		u8 gain = chip->params.als_gain;			// auto gain , 1x , 16x , 120x
@@ -498,9 +498,9 @@ static int taos_get_lux(struct tsl2772_chip *chip)
 			lux = 0;
 			goto exit;
 		} else if (c0 >= sat) {
-			dev_dbg(dev, "%s: saturation, keep lux\n", __func__);
-			lux = chip->als_inf.lux;
-			goto exit;
+			dev_dbg(dev, "%s: saturation to %u\n", __func__, sat);
+			c0 = min_t(u32, MAX_ALS_VALUE, sat);
+			c1 = 0;
 		}
 	}
 
