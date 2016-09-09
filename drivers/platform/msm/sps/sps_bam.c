@@ -145,7 +145,7 @@ static irqreturn_t bam_isr(int irq, void *ctxt)
 				BAM_ID(dev), source, mask);
 
 		if ((source & (1UL << 31)) && (dev->props.callback)) {
-			SPS_INFO("sps:bam_isr:bam=0x%x;callback for case %d.",
+			SPS_DBG1("sps:bam_isr:bam=0x%x;callback for case %d.",
 				BAM_ID(dev), cb_case);
 			dev->props.callback(cb_case, dev->props.user);
 		}
@@ -402,7 +402,7 @@ int sps_bam_enable(struct sps_bam *dev)
 	}
 
 	dev->state |= BAM_STATE_ENABLED;
-	SPS_INFO("sps:BAM 0x%x enabled: ver:0x%x, number of pipes:%d",
+	SPS_DBG1("sps:BAM 0x%x enabled: ver:0x%x, number of pipes:%d",
 		BAM_ID(dev), dev->version, dev->props.num_pipes);
 	return 0;
 }
