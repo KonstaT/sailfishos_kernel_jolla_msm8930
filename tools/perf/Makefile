@@ -108,6 +108,7 @@ EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wnested-externs
 EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wold-style-definition
 EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wstrict-prototypes
 EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wdeclaration-after-statement
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wno-deprecated-declarations
 
 ifeq ("$(origin DEBUG)", "command line")
   PERF_DEBUG = $(DEBUG)
