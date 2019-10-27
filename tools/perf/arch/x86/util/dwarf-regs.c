@@ -20,7 +20,7 @@
  *
  */
 
-#include <libio.h>
+#include <stdio.h>
 #include <dwarf-regs.h>
 
 /*

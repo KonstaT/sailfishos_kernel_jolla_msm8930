@@ -11,7 +11,7 @@
 
 #include <stdlib.h>
 #ifndef __UCLIBC__
-#include <libio.h>
+#include <stdio.h>
 #endif
 #include <dwarf-regs.h>
 
